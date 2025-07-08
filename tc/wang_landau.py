@@ -25,9 +25,9 @@ def run_wang_landau(
     flatness: float = 0.8,
     seeds: Sequence[int] = (123,),
     thin_target: int = 500,
-    n_samples_per_site: int = 1000,
-    window_width_factor: float = 5.0,
-) -> Sampler:
+    n_samples_per_site: int = 100_000,
+    window_width_factor: tuple[float, float] = (30.0, 50.0),
+) -> tuple[Sampler, float, float, float, float]:
     """Run a Wang-Landau sampler and show a three-panel diagnostic figure.
 
     The figure contains:
@@ -41,7 +41,9 @@ def run_wang_landau(
     # 1) Define the WL energy window (per primitive cell)
     # ------------------------------------------------------------
     mu, sigma = samples.mean(), samples.std()
-    min_E, max_E = mu - window_width_factor * sigma, mu + window_width_factor * sigma
+    window_low, window_high = window_width_factor
+    min_E = mu - window_low * sigma
+    max_E = mu + window_high * sigma
     bin_size = (max_E - min_E) / num_bins
     print(
         f"Energy window : [{min_E:.3f}, {max_E:.3f}] eV "
@@ -76,18 +78,14 @@ def run_wang_landau(
     thin_by = max(1, math.ceil(nsamples / thin_target))
     sampler.run(nsamples, occ_enc, thin_by=thin_by, progress=True)
 
-    temperatures_K = np.linspace(1.0, 20.0, 10_000)
-    Cv = _compute_thermodynamics(sampler, ensemble, temperatures_K)
-    _generate_wl_plots( mu, min_E, max_E, bin_size, sampler, temperatures_K, Cv)
-
-    return sampler
+    return sampler, mu, min_E, max_E, bin_size
 
 
 # =====================================================================
 # Helper functions
 # =====================================================================
 
-def _generate_wl_plots(
+def generate_wl_plots(
     mu: float,
     min_E: float,
     max_E: float,
@@ -129,7 +127,7 @@ def _generate_wl_plots(
     # (3) Heat capacity -----------------------------------------------------
     ax_bot.plot(temperatures, Cv, lw=2)
     ax_bot.set_xlabel("Temperature (K)")
-    ax_bot.set_ylabel(r"$C_v$ per atom (eV K$^{-1}$)")
+    ax_bot.set_ylabel(r"$C_v$ per unit cell (eV K$^{-1}$)")
     ax_bot.set_title("Wang-Landau $C_v(T)$")
 
     plt.show()
@@ -169,7 +167,7 @@ def _initialize_supercell_occupancy(
     return occ_enc.astype(np.int32)
 
 
-def _compute_thermodynamics(
+def compute_thermodynamics(
     sampler: Sampler,
     ensemble: Ensemble,
     temperatures_K: np.ndarray,
@@ -188,7 +186,7 @@ def _compute_thermodynamics(
     Returns
     -------
     Cv : np.ndarray
-        Heat capacity per atom (eV K^-1)
+        Heat capacity per primitive cell (eV K^-1)
     """
     # Extract density of states from entropy
     entropy = sampler.samples.get_trace_value("entropy")[-1]
@@ -197,34 +195,23 @@ def _compute_thermodynamics(
     dos_levels = np.exp(ent_ref - ent_ref.max())
     dos_levels /= dos_levels.sum()
 
-    # Get energy levels per atom
-    N_sites = ensemble.num_sites
-    energy_levels = sampler.mckernels[0].levels / N_sites  # eV per atom
+    # Get energy levels per primitive cell (make intensive for thermodynamics)
+    print(f"Debug: ensemble.processor.size = {ensemble.processor.size}")
+    print(f"Debug: ensemble.num_sites = {ensemble.num_sites}")
+    print(f"Debug: ratio = {ensemble.num_sites / ensemble.processor.size}")
+    energy_levels = sampler.mckernels[0].levels
 
     # Print energy diagnostics
-    print("min(raw) =", 1000 * energy_levels.min(), "meV")
-    print("max(raw) =", 1000 * energy_levels.max(), "meV")
-    print("ΔE =", 1000 * (energy_levels.max() - energy_levels.min()), "meV")
+    print("min(raw) =", energy_levels.min(), "eV")
+    print("max(raw) =", energy_levels.max(), "eV")
+    print("ΔE =", energy_levels.max() - energy_levels.min(), "eV")
 
     # Compute thermodynamic properties
     k_B = 8.617333262e-5  # eV / K
     E_rr = energy_levels - energy_levels.min()
 
-    Z = np.array(
-        [np.sum(dos_levels * np.exp(-E_rr / (k_B * T))) for T in temperatures_K]
-    )
-    U = (
-        np.array(
-            [np.sum(dos_levels * energy_levels * np.exp(-E_rr / (k_B * T))) for T in temperatures_K]
-        )
-        / Z
-    )
-    U2 = (
-        np.array(
-            [np.sum(dos_levels * energy_levels ** 2 * np.exp(-E_rr / (k_B * T))) for T in temperatures_K]
-        )
-        / Z
-    )
+    Z = np.array([np.sum(dos_levels * np.exp(-E_rr / (k_B * T))) for T in temperatures_K])
+    U = np.array([np.sum(dos_levels * energy_levels * np.exp(-E_rr / (k_B * T))) for T in temperatures_K]) / Z
+    U2 = np.array([np.sum(dos_levels * energy_levels ** 2 * np.exp(-E_rr / (k_B * T))) for T in temperatures_K]) / Z
     Cv = (U2 - U ** 2) / (k_B * temperatures_K ** 2)  # eV / K / atom
-
     return Cv

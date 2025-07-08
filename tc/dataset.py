@@ -13,7 +13,7 @@ from sklearn.model_selection import KFold
 from smol.cofe import ClusterExpansion, ClusterSubspace, StructureWrangler
 from smol.moca import Ensemble
 from tqdm.auto import tqdm
-
+from monty.serialization import dumpfn
 
 def make_ce_ensembles_from_mace(
         conv_cell: Atoms,
@@ -23,7 +23,7 @@ def make_ce_ensembles_from_mace(
         new_elements: tuple[str, str],
         ratio: float,
         *,
-        ensemble_sizes: tuple[int, ...] = (4, 6, 8),
+        ensemble_sizes: tuple[int, ...] = (4, 6, 8, 10, 12),
         supercell_size: int = 6,
         bin_counts: int = 200,
         ) -> list[Ensemble]:
@@ -39,7 +39,12 @@ def make_ce_ensembles_from_mace(
     ce = cluster_expansion_from_pmg_structs(conv_cell, supercell_diag, pmg_structs, replace_element, new_elements)
 
     # Create a canonical ensemble
-    ensembles  = [Ensemble.from_cluster_expansion(ce, np.diag((n, n, n))) for n in ensemble_sizes]
+    ensembles  = []
+    for n in ensemble_sizes:
+        ensemble = Ensemble.from_cluster_expansion(ce, np.diag((n, n, n)))
+        ensembles.append(ensemble)
+        dumpfn(ensemble, f"{''.join(new_elements)}O_ensemble{n}.json.gz", indent=2)
+
     return ensembles
 
 def calculate_endpoint_energies(conv_cell, calc, new_elements, replace_idx):
