@@ -96,9 +96,7 @@ def generate_wl_plots(
 ) -> None:
     """Create a 3-panel figure using data pre-computed in `run_wang_landau`."""
 
-    fig, (ax_top, ax_mid, ax_bot) = plt.subplots(
-        3, 1, figsize=(6, 9), sharex=False, constrained_layout=True
-    )
+    _, (ax_top, ax_mid, ax_bot) = plt.subplots(3, 1, figsize=(6, 9), sharex=False, constrained_layout=True)
 
     # (1) WL convergence ---------------------------------------------------
     mod_factor = sampler.samples.get_trace_value("mod_factor")
@@ -118,7 +116,7 @@ def generate_wl_plots(
 
     ax_mid.semilogy(bin_centers[mask], dos, ".-")
     ax_mid.axvline(mu, color="red", ls="--", label="mean train energy")
-    ax_mid.set_xlabel(r"$E$ (eV / cell)")
+    ax_mid.set_xlabel(r"$E$ (eV / supercell)")
     ax_mid.set_ylabel("Density of states")
     ax_mid.set_title("WL DOS estimate")
     ax_mid.set_xlim(min_E, max_E)
@@ -127,7 +125,7 @@ def generate_wl_plots(
     # (3) Heat capacity -----------------------------------------------------
     ax_bot.plot(temperatures, Cv, lw=2)
     ax_bot.set_xlabel("Temperature (K)")
-    ax_bot.set_ylabel(r"$C_v$ per unit cell (eV K$^{-1}$)")
+    ax_bot.set_ylabel(r"$C_v$ per supercell (eV K$^{-1}$)")
     ax_bot.set_title("Wang-Landau $C_v(T)$")
 
     plt.show()
@@ -164,12 +162,11 @@ def _initialize_supercell_occupancy(
     pmg_struct = AseAtomsAdaptor.get_structure(snapshot)
     occ_enc = subspace.occupancy_from_structure(pmg_struct, scmatrix=sc_mat, encode=True)
 
-    return occ_enc.astype(np.int32)
+    return occ_enc.astype(np.int32) # type: ignore
 
 
 def compute_thermodynamics(
     sampler: Sampler,
-    ensemble: Ensemble,
     temperatures_K: np.ndarray,
 ) -> np.ndarray:
     """Compute heat capacity from Wang-Landau sampler results.
@@ -178,8 +175,6 @@ def compute_thermodynamics(
     ----------
     sampler : Sampler
         Wang-Landau sampler with entropy and energy data
-    ensemble : Ensemble
-        Ensemble object containing number of sites
     temperatures_K : np.ndarray
         Temperature array (K)
         
@@ -194,11 +189,6 @@ def compute_thermodynamics(
     ent_ref = entropy[mask] - entropy[mask].min()
     dos_levels = np.exp(ent_ref - ent_ref.max())
     dos_levels /= dos_levels.sum()
-
-    # Get energy levels per primitive cell (make intensive for thermodynamics)
-    print(f"Debug: ensemble.processor.size = {ensemble.processor.size}")
-    print(f"Debug: ensemble.num_sites = {ensemble.num_sites}")
-    print(f"Debug: ratio = {ensemble.num_sites / ensemble.processor.size}")
     energy_levels = sampler.mckernels[0].levels
 
     # Print energy diagnostics

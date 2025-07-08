@@ -1,5 +1,3 @@
-import math
-
 import numpy as np
 from ase.atoms import Atoms
 from mace.calculators import MACECalculator
@@ -23,12 +21,12 @@ def make_ce_ensembles_from_mace(
         new_elements: tuple[str, str],
         ratio: float,
         *,
-        ensemble_sizes: tuple[int, ...] = (4, 6, 8, 10, 12),
+        ensemble_sizes: tuple[int, ...] = (4, 6, 8, 10),
         supercell_size: int = 6,
         bin_counts: int = 200,
         ) -> list[Ensemble]:
 
-    replace_idx = [i for i, at in enumerate(conv_cell) if at.symbol == replace_element]
+    replace_idx = [i for i, at in enumerate(conv_cell) if at.symbol == replace_element] # type: ignore
     endpoint_energies = calculate_endpoint_energies(conv_cell, calc, new_elements, replace_idx)
 
     supercell_diag = (supercell_size, supercell_size, supercell_size)
@@ -87,7 +85,7 @@ def cluster_expansion_from_pmg_structs(
         new_elements: tuple[str, ...],
         )-> ClusterExpansion:
     # Count how many cations are in the conv_cell
-    n_cations_per_prim = sum(1 for at in conv_cell if at.symbol == replace_element)
+    n_cations_per_prim = sum(1 for at in conv_cell if at.symbol == replace_element) # type: ignore
 
     prim_cfg = AseAtomsAdaptor.get_structure(conv_cell) # pyright: ignore[reportArgumentType]
     composition = Composition({Element(elem): 0.5 for elem in new_elements})
@@ -102,7 +100,6 @@ def cluster_expansion_from_pmg_structs(
     entries   = [ComputedStructureEntry(structure=s, energy=s.energy) for s in pmg_structs]
     wrangler = StructureWrangler(subspace)
     supercell_matrix = np.diag(supercell_diag)
-    N_prims = math.prod(supercell_diag)
     for ent in tqdm(entries, desc="Adding"):
         wrangler.add_entry(ent, supercell_matrix=supercell_matrix, verbose=False)
 

@@ -130,7 +130,7 @@ def run_metropolis_heat_capacity(
 def plot_cv_curve(temperatures: np.ndarray, Cv: np.ndarray) -> None:
     """Simple helper – plot *Cv(T)* on a fresh Matplotlib figure."""
 
-    fig, ax = plt.subplots(figsize=(5, 4))
+    _, ax = plt.subplots(figsize=(5, 4))
     ax.plot(temperatures, Cv, marker="o", lw=2)
     ax.set_xlabel("Temperature (K)")
     ax.set_ylabel(r"$C_v$ per unit cell (eV K$^{-1}$)")
@@ -178,4 +178,4 @@ def _initialize_supercell_occupancy(
     pmg_struct = AseAtomsAdaptor.get_structure(snapshot)
     occ_enc = subspace.occupancy_from_structure(pmg_struct, scmatrix=sc_mat, encode=True)
 
-    return occ_enc.astype(np.int32)
+    return occ_enc.astype(np.int32) # type: ignore
