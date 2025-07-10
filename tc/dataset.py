@@ -19,22 +19,22 @@ def make_ce_ensembles_from_mace(
         calc: MACECalculator,
         replace_element: str,
         new_elements: tuple[str, str],
-        ratio: float,
         *,
-        ensemble_sizes: tuple[int, ...] = (4, 6, 8, 10),
+        ensemble_sizes: tuple[int, ...] = (4, 6),
         supercell_size: int = 6,
         bin_counts: int = 200,
+        bins: int = 10,
         ) -> list[Ensemble]:
 
     replace_idx = [i for i, at in enumerate(conv_cell) if at.symbol == replace_element] # type: ignore
     endpoint_energies = calculate_endpoint_energies(conv_cell, calc, new_elements, replace_idx)
 
     supercell_diag = (supercell_size, supercell_size, supercell_size)
-    snapshots = make_snapshots(conv_cell, supercell_diag, rng, replace_element, new_elements, bin_counts, ratio)
+    snapshots = make_snapshots(conv_cell, supercell_diag, rng, replace_element, new_elements, bin_counts, bins)
     n_cations = len(replace_idx) * supercell_size**3
     print(f"Total snapshots: {len(snapshots)} for {n_cations} cations")
     pmg_structs = calculate_mace_energies(calc, snapshots, new_elements, endpoint_energies, n_cations)
-    ce = cluster_expansion_from_pmg_structs(conv_cell, supercell_diag, pmg_structs, replace_element, new_elements)
+    ce = cluster_expansion_from_pmg_structs(conv_cell, {1: 100, 2: 10.0, 3: 8.0, 4: 6.0}, supercell_diag, pmg_structs, replace_element, new_elements)
 
     # Create a canonical ensemble
     ensembles  = []
@@ -79,6 +79,7 @@ def calculate_mace_energies(
 
 def cluster_expansion_from_pmg_structs(
         conv_cell: Atoms,
+        cutoffs,
         supercell_diag: tuple[int, int, int],
         pmg_structs: list[Structure],
         replace_element: str,
@@ -91,17 +92,22 @@ def cluster_expansion_from_pmg_structs(
     composition = Composition({Element(elem): 0.5 for elem in new_elements})
     prim_cfg.replace_species({Element(replace_element): composition})
 
+    print(f"Primitive cell: {prim_cfg.composition.reduced_formula} with {n_cations_per_prim} cations")
     subspace = ClusterSubspace.from_cutoffs(
         structure = prim_cfg,
-        cutoffs   = {2: 10.0, 3: 8.0},
+        cutoffs   = cutoffs,
         basis     = "indicator"
     )
+    print(f"Number of orbits: {subspace.num_orbits}")
 
-    entries   = [ComputedStructureEntry(structure=s, energy=s.energy) for s in pmg_structs]
+    entries = [ComputedStructureEntry(structure=s, energy=s.energy) for s in pmg_structs]
     wrangler = StructureWrangler(subspace)
     supercell_matrix = np.diag(supercell_diag)
+    site_map = None
     for ent in tqdm(entries, desc="Adding"):
-        wrangler.add_entry(ent, supercell_matrix=supercell_matrix, verbose=False)
+        wrangler.add_entry(ent, supercell_matrix=supercell_matrix, site_mapping=site_map, verbose=False)
+        if site_map is None:
+            site_map = wrangler.entries[-1].data["site_mapping"]
 
     print(f"Matched structures: {wrangler.num_structures}/{len(entries)}")
 
@@ -111,6 +117,7 @@ def cluster_expansion_from_pmg_structs(
     reg = LinearRegression(fit_intercept=False)
     reg.fit(X, y)
     coefs = reg.coef_
+    print("rank =", np.linalg.matrix_rank(X), "of", X.shape[1], "columns")
 
     rmse = np.sqrt(mean_squared_error(y, X @ coefs))
     mex  = max_error(y, X @ coefs)
@@ -133,7 +140,7 @@ def make_snapshots(
         replace_element: str,
         new_elements: tuple[str, str],
         bin_counts: int,
-        ratio: float,
+        bins: int = 10,
         ) -> list[Atoms]:
     if len(new_elements) != 2:
         raise NotImplementedError("Only two new elements are supported for replacement.")
@@ -144,9 +151,12 @@ def make_snapshots(
     n_replace  = len(replace_idx)
 
     # ---------- Stratified random sampling ----------
-    composition_bins = {
-        ratio: bin_counts,
-    }
+    # endpoints
+    composition_bins = {0.0: 1, 1.0: 1}
+
+    # interior points
+    for p in np.linspace(0, 1, bins + 2, endpoint=True)[1:-1]:
+        composition_bins[p] = bin_counts
 
     snapshots: list[Atoms] = []
     for A_frac, count in composition_bins.items():

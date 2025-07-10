@@ -28,9 +28,8 @@ def evaluate_ensemble_vs_mace(
     *,
     replace_element: str,
     new_elements: tuple[str, str],
-    n_test: int = 10,
-    # comps: tuple[float, ...] = (0.25, 0.40, 0.50, 0.60, 0.75),
-    comps: tuple[float, ...] = (0.50,),
+    n_test: int = 30,
+    comps: tuple[float, ...] = (0, 0.2, 0.5, 0.8, 1),
 ) -> ErrorStats:
     """
     Compare CE (via Ensemble.processor.compute_property) to MACE on random configs.
@@ -204,5 +203,5 @@ def sample_configs_fast(
 
     # print the mean, std dev, min, and max of the CE energies
     ce_E = np.array(ce_E)
-    print(f"CE energies: mean = {1000 * ce_E.mean():8.2f} meV, std = {1000 * ce_E.std():8.2f} meV, min = {1000 * ce_E.min():8.2f} meV, max = {1000 * ce_E.max():8.2f} meV")
+    print(f"ratio: {ratio} CE energies: mean = {1000 * ce_E.mean():8.2f} meV, std = {1000 * ce_E.std():8.2f} meV, min = {1000 * ce_E.min():8.2f} meV, max = {1000 * ce_E.max():8.2f} meV")
     return ce_E

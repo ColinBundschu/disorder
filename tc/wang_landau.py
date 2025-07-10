@@ -26,7 +26,8 @@ def run_wang_landau(
     seeds: Sequence[int] = (123,),
     thin_target: int = 500,
     n_samples_per_site: int = 100_000,
-    window_width_factor: tuple[float, float] = (30.0, 50.0),
+    window_width_factor: tuple[float, float] = (25, 35),
+    progress: bool = True,
 ) -> tuple[Sampler, float, float, float, float]:
     """Run a Wang-Landau sampler and show a three-panel diagnostic figure.
 
@@ -76,7 +77,7 @@ def run_wang_landau(
     # ------------------------------------------------------------
     nsamples = int(n_samples_per_site * ensemble.num_sites)
     thin_by = max(1, math.ceil(nsamples / thin_target))
-    sampler.run(nsamples, occ_enc, thin_by=thin_by, progress=True)
+    sampler.run(nsamples, occ_enc, thin_by=thin_by, progress=progress)
 
     return sampler, mu, min_E, max_E, bin_size
 
@@ -205,3 +206,82 @@ def compute_thermodynamics(
     U2 = np.array([np.sum(dos_levels * energy_levels ** 2 * np.exp(-E_rr / (k_B * T))) for T in temperatures_K]) / Z
     Cv = (U2 - U ** 2) / (k_B * temperatures_K ** 2)  # eV / K / atom
     return Cv
+
+# ── tc/wang_landau.py  (add near the bottom) ───────────────────────────
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (registers 3-D proj)
+import numpy as np
+
+
+def plot_cv_surface(
+    ratios: np.ndarray,
+    temperatures_K: np.ndarray,
+    Cv_matrix: np.ndarray,
+    *,
+    mode: str = "surface",        # "surface" | "pcolormesh"
+    cmap: str = "viridis",
+) -> None:
+    """
+    Plot a 3-D heat-capacity surface C_v(T, x).
+
+    Parameters
+    ----------
+    ratios : 1-D np.ndarray
+        Composition axis (x = N_Mg / N_total), shape (M,)
+    temperatures_K : 1-D np.ndarray
+        Temperature axis (K), shape (N,)
+    Cv_matrix : 2-D np.ndarray
+        Heat capacity values, shape (M, N).  Cv_matrix[i, j] = Cv(T_j, x_i)
+    mode : str
+        "surface"  –  3-D surface plot (default)  
+        "pcolormesh" –  2-D colour map in the (T, x) plane
+    cmap : str
+        Matplotlib colormap
+    """
+    ratios = np.asarray(ratios)
+    temperatures_K = np.asarray(temperatures_K)
+    Cv_matrix = np.asarray(Cv_matrix)
+
+    if Cv_matrix.shape != (ratios.size, temperatures_K.size):
+        raise ValueError("Cv_matrix shape must be (len(ratios), len(T)).")
+
+    if mode == "pcolormesh":
+        plt.figure(figsize=(7, 4))
+        T_grid, X_grid = np.meshgrid(temperatures_K, ratios)
+        pcm = plt.pcolormesh(
+            T_grid,
+            X_grid,
+            Cv_matrix,
+            shading="auto",
+            cmap=cmap,
+        )
+        plt.colorbar(pcm, label=r"$C_v$ (eV K$^{-1}$ per supercell)")
+        plt.xlabel("Temperature (K)")
+        plt.ylabel("Mg fraction $x$")
+        plt.title(r"$C_v(T,x)$ from Wang–Landau")
+        plt.tight_layout()
+        plt.show()
+
+    elif mode == "surface":
+        fig = plt.figure(figsize=(7, 5))
+        ax = fig.add_subplot(111, projection="3d")
+        T_grid, X_grid = np.meshgrid(temperatures_K, ratios)
+        ax.plot_surface(
+            T_grid,
+            X_grid,
+            Cv_matrix,
+            rstride=1,
+            cstride=1,
+            cmap=cmap,
+            linewidth=0,
+            antialiased=True,
+        )
+        ax.set_xlabel("Temperature (K)")
+        ax.set_ylabel("Mg fraction $x$")
+        ax.set_zlabel(r"$C_v$ (eV K$^{-1}$ per supercell)")
+        ax.set_title(r"$C_v(T,x)$ from Wang–Landau")
+        ax.view_init(elev=25, azim=-60)
+        plt.tight_layout()
+        plt.show()
+    else:
+        raise ValueError("mode must be 'surface' or 'pcolormesh'")
