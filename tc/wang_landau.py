@@ -46,6 +46,7 @@ def run_wang_landau(
     min_E = mu - window_low * sigma
     max_E = mu + window_high * sigma
     bin_size = (max_E - min_E) / num_bins
+    max_E = min_E + num_bins * bin_size  # ensure max_E is exact to avoid rounding issues
     print(
         f"Energy window : [{min_E:.3f}, {max_E:.3f}] eV "
         f"({num_bins} bins, {bin_size:.4f} eV each)"
@@ -95,42 +96,87 @@ def generate_wl_plots(
     temperatures: np.ndarray,
     Cv: np.ndarray,
 ) -> None:
-    """Create a 3-panel figure using data pre-computed in `run_wang_landau`."""
+    """Create a 4-panel figure (2 × 2)."""
 
-    _, (ax_top, ax_mid, ax_bot) = plt.subplots(3, 1, figsize=(6, 9), sharex=False, constrained_layout=True)
+    # ------------------------------------------------------------------
+    # Figure / axes layout
+    # ------------------------------------------------------------------
+    fig, axes = plt.subplots(
+        2, 2, figsize=(10, 8), sharex=False, constrained_layout=True
+    )
+    ax_conv, ax_dos   = axes[0]        # first row
+    ax_cv,   ax_hist  = axes[1]        # second row
 
-    # (1) WL convergence ---------------------------------------------------
+    # ==================================================================
+    # (1) WL convergence  (top-left)
+    # ==================================================================
     mod_factor = sampler.samples.get_trace_value("mod_factor")
-    ax_top.semilogy(mod_factor, ".-")
-    ax_top.set_xlabel("Iteration")
-    ax_top.set_ylabel("Modification factor")
-    ax_top.set_title("WL convergence")
+    ax_conv.semilogy(mod_factor, ".-")
+    ax_conv.set_xlabel("Iteration")
+    ax_conv.set_ylabel("Modification factor")
+    ax_conv.set_title("WL convergence")
 
-    # (2) Density of states -------------------------------------------------
+    # ==================================================================
+    # (2) Density of states          (top-right)
+    # ==================================================================
     entropy = sampler.samples.get_trace_value("entropy")[-1]
-    nbins = entropy.size
+    nbins   = entropy.size
     bin_centers = min_E + (np.arange(nbins) + 0.5) * bin_size
+
     mask = entropy > 0
     S_shift = entropy[mask] - entropy[mask].min()
     dos = np.exp(S_shift - S_shift.max())
     dos /= dos.sum()
 
-    ax_mid.semilogy(bin_centers[mask], dos, ".-")
-    ax_mid.axvline(mu, color="red", ls="--", label="mean train energy")
-    ax_mid.set_xlabel(r"$E$ (eV / supercell)")
-    ax_mid.set_ylabel("Density of states")
-    ax_mid.set_title("WL DOS estimate")
-    ax_mid.set_xlim(min_E, max_E)
-    ax_mid.legend()
+    ax_dos.semilogy(bin_centers[mask], dos, ".-")
+    ax_dos.axvline(mu, color="red", ls="--", label="mean train energy")
+    ax_dos.set_xlabel(r"$E$ (eV / supercell)")
+    ax_dos.set_ylabel("Density of states")
+    ax_dos.set_title("WL DOS estimate")
+    ax_dos.set_xlim(min_E, max_E)
+    ax_dos.legend()
 
-    # (3) Heat capacity -----------------------------------------------------
-    ax_bot.plot(temperatures, Cv, lw=2)
-    ax_bot.set_xlabel("Temperature (K)")
-    ax_bot.set_ylabel(r"$C_v$ per supercell (eV K$^{-1}$)")
-    ax_bot.set_title("Wang-Landau $C_v(T)$")
+    # ==================================================================
+    # (3) Heat-capacity curve        (bottom-left)
+    # ==================================================================
+    ax_cv.plot(temperatures, Cv, lw=2)
+    ax_cv.set_xlabel("Temperature (K)")
+    ax_cv.set_ylabel(r"$C_v$ per supercell (eV K$^{-1}$)")
+    ax_cv.set_title("Wang-Landau $C_v(T)$")
+
+    # ==================================================================
+    # (4) Histogram of *kept* configs (bottom-right)
+    # ==================================================================
+    # 4a) obtain energies of trace & map to bins
+    energies = sampler.samples.get_trace_value("enthalpy")
+
+    # helper: convert an enthalpy value to its bin number
+    idx = lambda E: int((E - min_E) // bin_size)
+
+    counts   = np.zeros(nbins, dtype=int)
+    for E in energies:
+        b = idx(E)
+        if 0 <= b < nbins:          # ignore any value outside the WL window
+            counts[b] += 1
+
+    ax_hist.bar(bin_centers, counts,
+                width=0.9*bin_size, align="center", edgecolor="k")
+    ax_hist.set_xlabel(r"$E$ (eV / supercell)")
+    ax_hist.set_ylabel("# kept configs")
+    ax_hist.set_title("Trace occupancy per energy bin")
+    ax_hist.set_xlim(min_E, max_E)
+
+    # annotate: unique occupancies vs. total kept
+    occs      = sampler.samples.get_trace_value("occupancy")
+    n_unique  = len({bytes(o) for o in occs})
+    ax_hist.annotate(
+        f"unique configs: {n_unique}/{len(occs)}",
+        xy=(0.98, 0.95), xycoords="axes fraction",
+        ha="right", va="top", fontsize=10,
+        bbox=dict(boxstyle="round,pad=0.25", fc="w")
+    )
 
     plt.show()
-
 
 def _initialize_supercell_occupancy(
     ensemble: Ensemble,
@@ -208,80 +254,157 @@ def compute_thermodynamics(
     return Cv
 
 # ── tc/wang_landau.py  (add near the bottom) ───────────────────────────
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (registers 3-D proj)
 import numpy as np
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 
-
+# ────────────────────────────────────────────────────────────────────
 def plot_cv_surface(
     ratios: np.ndarray,
     temperatures_K: np.ndarray,
     Cv_matrix: np.ndarray,
     *,
-    mode: str = "surface",        # "surface" | "pcolormesh"
+    mode: str = "surface",              # "surface" | "pcolormesh" | "scatter"
     cmap: str = "viridis",
-) -> None:
+    engine: str = "mpl",                # "mpl" | "plotly"
+    **plotly_kwargs                     # forwarded to go.Figure()
+):
     """
-    Plot a 3-D heat-capacity surface C_v(T, x).
+    Interactive/-static visualisation of C_v(T, x).
 
     Parameters
     ----------
-    ratios : 1-D np.ndarray
-        Composition axis (x = N_Mg / N_total), shape (M,)
-    temperatures_K : 1-D np.ndarray
-        Temperature axis (K), shape (N,)
-    Cv_matrix : 2-D np.ndarray
-        Heat capacity values, shape (M, N).  Cv_matrix[i, j] = Cv(T_j, x_i)
-    mode : str
-        "surface"  –  3-D surface plot (default)  
-        "pcolormesh" –  2-D colour map in the (T, x) plane
-    cmap : str
-        Matplotlib colormap
+    ratios, temperatures_K, Cv_matrix
+        Same meaning as before.
+    mode
+        "surface"        – a mesh surface (3-D)
+        "pcolormesh"     – 2-D colour-map
+        **"scatter"**    – coloured points at the grid nodes
+    engine
+        "mpl"     → Matplotlib backend
+        "plotly"  → Plotly backend (interactive)
+    plotly_kwargs
+        Extra keyword args passed to go.Figure(**plotly_kwargs)
     """
-    ratios = np.asarray(ratios)
+    ratios         = np.asarray(ratios)
     temperatures_K = np.asarray(temperatures_K)
-    Cv_matrix = np.asarray(Cv_matrix)
+    Cv_matrix      = np.asarray(Cv_matrix)
 
     if Cv_matrix.shape != (ratios.size, temperatures_K.size):
         raise ValueError("Cv_matrix shape must be (len(ratios), len(T)).")
 
+    # ----------------------------------------------------------------
+    # MATPLOTLIB
+    # ----------------------------------------------------------------
+    if engine == "mpl":
+        if mode == "pcolormesh":
+            fig, ax = plt.subplots(figsize=(7, 4))
+            T, X = np.meshgrid(temperatures_K, ratios)
+            pcm = ax.pcolormesh(T, X, Cv_matrix, cmap=cmap, shading="auto")
+            fig.colorbar(pcm, ax=ax, label=r"$C_v$ (eV K$^{-1}$ / supercell)")
+            ax.set(xlabel="Temperature (K)", ylabel="Mg fraction $x$",
+                   title=r"$C_v(T,x)$ – Wang-Landau")
+        elif mode == "surface":
+            fig = plt.figure(figsize=(7, 5))
+            ax  = fig.add_subplot(111, projection="3d")
+            T, X = np.meshgrid(temperatures_K, ratios)
+            ax.plot_surface(T, X, Cv_matrix, cmap=cmap,
+                            rstride=1, cstride=1, antialiased=True)
+            ax.set(xlabel="Temperature (K)", ylabel="Mg fraction $x$",
+                   zlabel=r"$C_v$ (eV K$^{-1}$ / supercell)",
+                   title=r"$C_v(T,x)$ – Wang-Landau")
+            ax.view_init(elev=25, azim=-60)
+        elif mode == "scatter":
+            fig = plt.figure(figsize=(7, 5))
+            ax  = fig.add_subplot(111, projection="3d")
+            T, X = np.meshgrid(temperatures_K, ratios)
+            sc = ax.scatter(T.ravel(), X.ravel(), Cv_matrix.ravel(),
+                            c=Cv_matrix.ravel(), cmap=cmap, s=15)
+            fig.colorbar(sc, ax=ax, label=r"$C_v$ (eV K$^{-1}$ / supercell)")
+            ax.set(xlabel="Temperature (K)", ylabel="Mg fraction $x$",
+                   zlabel=r"$C_v$ (eV K$^{-1}$ / supercell)",
+                   title=r"$C_v(T,x)$ – Wang-Landau (scatter)")
+            ax.view_init(elev=25, azim=-60)
+        else:
+            raise ValueError("mode must be 'surface', 'pcolormesh' or 'scatter'")
+        plt.tight_layout()
+        return fig  # caller can `.show()` or further tweak
+
+    # ----------------------------------------------------------------
+    # PLOTLY (interactive)
+    # ----------------------------------------------------------------
+    if engine == "plotly":
+        # helper: convert a Matplotlib colormap → Plotly colourscale
+        def _mpl_to_plotly(cm, n=256):
+            return [[i/(n-1), f'rgb({int(r*255)},{int(g*255)},{int(b*255)})']
+                    for i, (r, g, b, _) in enumerate(cm(np.linspace(0, 1, n)))]
+        cscale = _mpl_to_plotly(plt.get_cmap(cmap))
+
+        if mode == "pcolormesh":
+            T, X = np.meshgrid(temperatures_K, ratios)
+            trace = go.Heatmap(x=T, y=X, z=Cv_matrix,
+                               colorscale=cscale, colorbar_title=r"$C_v$")
+        elif mode == "surface":
+            T, X = np.meshgrid(temperatures_K, ratios)
+            trace = go.Surface(x=T, y=X, z=Cv_matrix,
+                               colorscale=cscale, colorbar_title=r"$C_v$")
+        elif mode == "scatter":
+            T, X = np.meshgrid(temperatures_K, ratios)
+            trace = go.Scatter3d(
+                x=T.ravel(), y=X.ravel(), z=Cv_matrix.ravel(),
+                mode="markers",
+                marker=dict(size=3, color=Cv_matrix.ravel(),
+                            colorscale=cscale, colorbar=dict(title=r"$C_v$"))
+            )
+        else:
+            raise ValueError("mode must be 'surface', 'pcolormesh' or 'scatter'")
+
+        fig = go.Figure(data=[trace], **plotly_kwargs)
+        fig.update_layout(
+            scene=dict(
+                xaxis_title="Temperature (K)",
+                yaxis_title="Mg fraction x",
+                zaxis_title=r"$C_v$ (eV K$^{-1}$ / supercell)",
+            ),
+            title=r"$C_v(T,x)$ – Wang-Landau",
+            margin=dict(l=0, r=0, t=40, b=0)
+        )
+        return fig
+
+    raise ValueError("engine must be 'mpl' or 'plotly'")
+
+
+
+# ------------------------------------------------------------------
+# Helper for the classic (static) Matplotlib rendering
+# ------------------------------------------------------------------
+def _static_cv_surface(ratios, T, Cv, *, mode="surface", cmap="viridis"):
     if mode == "pcolormesh":
         plt.figure(figsize=(7, 4))
-        T_grid, X_grid = np.meshgrid(temperatures_K, ratios)
+        T_grid, X_grid = np.meshgrid(T, ratios)
         pcm = plt.pcolormesh(
-            T_grid,
-            X_grid,
-            Cv_matrix,
-            shading="auto",
-            cmap=cmap,
+            T_grid, X_grid, Cv, shading="auto", cmap=cmap
         )
         plt.colorbar(pcm, label=r"$C_v$ (eV K$^{-1}$ per supercell)")
         plt.xlabel("Temperature (K)")
         plt.ylabel("Mg fraction $x$")
-        plt.title(r"$C_v(T,x)$ from Wang–Landau")
+        plt.title(r"$C_v(T,x)$ from Wang–Landau (static)")
         plt.tight_layout()
         plt.show()
-
-    elif mode == "surface":
+    else:
+        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
         fig = plt.figure(figsize=(7, 5))
         ax = fig.add_subplot(111, projection="3d")
-        T_grid, X_grid = np.meshgrid(temperatures_K, ratios)
+        T_grid, X_grid = np.meshgrid(T, ratios)
         ax.plot_surface(
-            T_grid,
-            X_grid,
-            Cv_matrix,
-            rstride=1,
-            cstride=1,
-            cmap=cmap,
-            linewidth=0,
-            antialiased=True,
+            T_grid, X_grid, Cv,
+            rstride=1, cstride=1,
+            cmap=cmap, linewidth=0, antialiased=True
         )
         ax.set_xlabel("Temperature (K)")
         ax.set_ylabel("Mg fraction $x$")
         ax.set_zlabel(r"$C_v$ (eV K$^{-1}$ per supercell)")
-        ax.set_title(r"$C_v(T,x)$ from Wang–Landau")
+        ax.set_title(r"$C_v(T,x)$ from Wang–Landau (static)")
         ax.view_init(elev=25, azim=-60)
         plt.tight_layout()
         plt.show()
-    else:
-        raise ValueError("mode must be 'surface' or 'pcolormesh'")

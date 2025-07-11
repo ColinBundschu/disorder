@@ -13,39 +13,27 @@ from smol.moca import Ensemble
 from tqdm.auto import tqdm
 from monty.serialization import dumpfn
 
-def make_ce_ensembles_from_mace(
-        conv_cell: Atoms,
-        rng: Generator,
-        calc: MACECalculator,
-        replace_element: str,
-        new_elements: tuple[str, str],
-        *,
-        ensemble_sizes: tuple[int, ...] = (4, 6),
-        supercell_size: int = 6,
-        bin_counts: int = 200,
-        bins: int = 10,
-        ) -> list[Ensemble]:
-
-    replace_idx = [i for i, at in enumerate(conv_cell) if at.symbol == replace_element] # type: ignore
-    endpoint_energies = calculate_endpoint_energies(conv_cell, calc, new_elements, replace_idx)
-
-    supercell_diag = (supercell_size, supercell_size, supercell_size)
-    snapshots = make_snapshots(conv_cell, supercell_diag, rng, replace_element, new_elements, bin_counts, bins)
-    n_cations = len(replace_idx) * supercell_size**3
-    print(f"Total snapshots: {len(snapshots)} for {n_cations} cations")
-    pmg_structs = calculate_mace_energies(calc, snapshots, new_elements, endpoint_energies, n_cations)
-    ce = cluster_expansion_from_pmg_structs(conv_cell, {1: 100, 2: 10.0, 3: 8.0, 4: 6.0}, supercell_diag, pmg_structs, replace_element, new_elements)
+def create_canonical_ensemble(conv_cell, calc, replace_element, new_elements, ensemble_size, ratio, endpoint_energies, supercell_diag, snapshots, reuse_site_map):
+    ce = ce_from_snapshots(conv_cell, calc, replace_element, new_elements, endpoint_energies, supercell_diag, snapshots, reuse_site_map)
 
     # Create a canonical ensemble
-    ensembles  = []
-    for n in ensemble_sizes:
-        ensemble = Ensemble.from_cluster_expansion(ce, np.diag((n, n, n)))
-        ensembles.append(ensemble)
-        dumpfn(ensemble, f"{''.join(new_elements)}O_ensemble{n}.json.gz", indent=2)
+    ensemble = Ensemble.from_cluster_expansion(ce, np.diag((ensemble_size, ensemble_size, ensemble_size)))
+    ensemble_and_endpoints = (ensemble, endpoint_energies)
+    ratio_str = f"{round(ratio*1000)}" if ratio is not None else "default"
+    dumpfn(ensemble_and_endpoints, f"{''.join(new_elements)}O_ensemble{ensemble_size}_{ratio_str}.json.gz", indent=2)
+    return ensemble
 
-    return ensembles
+def ce_from_snapshots(conv_cell, calc, replace_element, new_elements, endpoint_energies, supercell_diag, snapshots, reuse_site_map):
+    pmg_structs = []
+    for snapshot in tqdm(snapshots, desc="MACE energies"):
+        pmg_struct = AseAtomsAdaptor.get_structure(snapshot) # pyright: ignore[reportArgumentType]
+        pmg_struct.energy = calculate_mace_energy(calc, snapshot, new_elements, endpoint_energies)
+        pmg_structs.append(pmg_struct)
+    ce = cluster_expansion_from_pmg_structs(conv_cell, {1: 100, 2: 10.0, 3: 8.0, 4: 6.0}, supercell_diag, pmg_structs, replace_element, new_elements, reuse_site_map)
+    return ce
 
-def calculate_endpoint_energies(conv_cell, calc, new_elements, replace_idx):
+def calculate_endpoint_energies(conv_cell, calc, replace_element, new_elements):
+    replace_idx = [i for i, at in enumerate(conv_cell) if at.symbol == replace_element] # type: ignore
     endpoint_energies = []
     for elem in new_elements:
         prim = conv_cell.copy()
@@ -55,27 +43,15 @@ def calculate_endpoint_energies(conv_cell, calc, new_elements, replace_idx):
         endpoint_energies.append(E_mace)
     return endpoint_energies
 
-def calculate_mace_energies(
+def calculate_mace_energy(
         calc: MACECalculator,
-        snapshots: list[Atoms],
+        snapshot: Atoms,
         cation_elements: tuple[str, str],
         endpoint_energies_per_cation: list[float],
-        n_cations: int,
-        *,
-        loading_bar: bool = True,
-        ) -> list[Structure]:
-    pmg_structs = []
-    for snapshot in tqdm(snapshots, desc="MACE energies", disable=not loading_bar):
-        snapshot.calc = calc
-        pmg_struct = AseAtomsAdaptor.get_structure(snapshot) # pyright: ignore[reportArgumentType]
-        cation_counts = []
-        for elem in cation_elements:
-            cation_counts.append(snapshot.symbols.count(elem))
-        if sum(cation_counts) != n_cations:
-            raise ValueError(f"Snapshot has {sum(cation_counts)} cations, expected {n_cations}.")
-        pmg_struct.energy = snapshot.get_potential_energy() - np.dot(cation_counts, endpoint_energies_per_cation)
-        pmg_structs.append(pmg_struct)
-    return pmg_structs
+        ) -> float:
+    cation_counts = [snapshot.symbols.count(elem) for elem in cation_elements]
+    snapshot.calc = calc
+    return snapshot.get_potential_energy() - np.dot(cation_counts, endpoint_energies_per_cation)
 
 def cluster_expansion_from_pmg_structs(
         conv_cell: Atoms,
@@ -84,6 +60,7 @@ def cluster_expansion_from_pmg_structs(
         pmg_structs: list[Structure],
         replace_element: str,
         new_elements: tuple[str, ...],
+        reuse_site_map: bool,
         )-> ClusterExpansion:
     # Count how many cations are in the conv_cell
     n_cations_per_prim = sum(1 for at in conv_cell if at.symbol == replace_element) # type: ignore
@@ -106,7 +83,7 @@ def cluster_expansion_from_pmg_structs(
     site_map = None
     for ent in tqdm(entries, desc="Adding"):
         wrangler.add_entry(ent, supercell_matrix=supercell_matrix, site_mapping=site_map, verbose=False)
-        if site_map is None:
+        if site_map is None and reuse_site_map:
             site_map = wrangler.entries[-1].data["site_mapping"]
 
     print(f"Matched structures: {wrangler.num_structures}/{len(entries)}")
@@ -139,8 +116,8 @@ def make_snapshots(
         rng: Generator,
         replace_element: str,
         new_elements: tuple[str, str],
-        bin_counts: int,
-        bins: int = 10,
+        count: int,
+        ratio: float,
         ) -> list[Atoms]:
     if len(new_elements) != 2:
         raise NotImplementedError("Only two new elements are supported for replacement.")
@@ -150,22 +127,28 @@ def make_snapshots(
     replace_idx = [i for i, at in enumerate(proto) if at.symbol == replace_element]
     n_replace  = len(replace_idx)
 
-    # ---------- Stratified random sampling ----------
-    # endpoints
-    composition_bins = {0.0: 1, 1.0: 1}
-
-    # interior points
-    for p in np.linspace(0, 1, bins + 2, endpoint=True)[1:-1]:
-        composition_bins[p] = bin_counts
-
     snapshots: list[Atoms] = []
-    for A_frac, count in composition_bins.items():
-        for _ in range(count):
-            snapshot = proto.copy()
-            n_A = int(round(A_frac * n_replace))
-            A_sites = rng.choice(replace_idx, size=n_A, replace=False)
-            snapshot.symbols[replace_idx] = B # Set all to B first
-            snapshot.symbols[A_sites] = A # Set selected sites to A
-            snapshots.append(snapshot)
+    for _ in range(count):
+        snapshot = proto.copy()
+        n_A = int(round(ratio * n_replace))
+        A_sites = rng.choice(replace_idx, size=n_A, replace=False)
+        snapshot.symbols[replace_idx] = B # Set all to B first
+        snapshot.symbols[A_sites] = A # Set selected sites to A
+        snapshots.append(snapshot)
 
     return snapshots
+
+def mace_E_from_occ(
+    ensemble       : Ensemble,
+    occupancy      : np.ndarray,
+    calc           : MACECalculator,
+    cation_elements: tuple[str, str],
+    endpoint_eVpc  : tuple[float, float],      # (E_Mg, E_Fe)  eV / cation
+) -> float:
+    """
+    Return the reference-shifted MACE energy (eV) of a configuration encoded
+    by `occupancy`.
+    """
+    struct = ensemble.processor.structure_from_occupancy(occupancy)
+    snapshot: Atoms = AseAtomsAdaptor.get_atoms(struct)
+    return calculate_mace_energy(calc, snapshot, cation_elements, list(endpoint_eVpc))
