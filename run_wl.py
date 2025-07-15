@@ -12,8 +12,20 @@ import tc.wang_landau
 import tc.sampler_data
 
 
-def _run_wl_to_convergence(ratio, seed, ensemble, num_bins, window, replace_element, new_elements, snapshots_per_loop,
-                           n_samples_per_site, supercell_size, mod_factor_threshold=1e-6, max_loops=200):
+def _run_wl_to_convergence(
+        ratio: float,  # ratio of new elements in the supercell
+        seed: int,  # random seed for this run
+        ensemble,  # ensemble of structures to sample from
+        num_bins: int,  # number of Wang-Landau bins
+        window: int,  # Wang-Landau energy window in stddevs of random
+        replace_element: str,  # element to be replaced in the supercell
+        new_elements: tuple,  # new elements to be added to the supercell
+        snapshots_per_loop: int,  # number of random snapshots per ratio
+        n_samples_per_site: int,  # number of Wang-Landau samples per site
+        supercell_size: int,  # size of the supercell (e.g., 6 for 6x6x6 supercell)
+        mod_factor_threshold: float = 1e-6,  # convergence threshold for the modification factor
+        max_loops: int = 200,  # maximum number of loops to run
+):
     rng = np.random.default_rng(seed)
     sampler = tc.wang_landau.initialize_wl_sampler(
         ensemble, rng=rng, ratio=ratio, num_bins=num_bins, seeds=[seed], window=(window, window))
@@ -32,7 +44,7 @@ def _run_wl_to_convergence(ratio, seed, ensemble, num_bins, window, replace_elem
         occ_enc = None
         loop_count += 1
 
-    status = "converged" if mod_factor <= mod_factor_threshold else "GAVE UP"
+    status = "CONVERGED" if mod_factor <= mod_factor_threshold else "INCOMPLETE"
     print(f"[p={ratio:4.2f}] {status} after {loop_count} loop(s); ln f={mod_factor:8.2e}")
 
 def main(argv=None):
@@ -54,7 +66,7 @@ def main(argv=None):
 
     print(f"Loading ensemble from {filepath}...")
     ensemble, _ = loadfn(filepath)
-    print(f"Ensemble loaded.")
+    print("Ensemble loaded.")
 
     child_seeds = [int(x) for x in seed_root.generate_state(len(ratios)).tolist()]
     print(f"Using {args.nprocs} workers for parallel sampling.")
