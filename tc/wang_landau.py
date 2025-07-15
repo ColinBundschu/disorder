@@ -1,4 +1,3 @@
-import math
 from typing import Sequence
 
 import matplotlib.pyplot as plt
@@ -7,10 +6,11 @@ from ase.build import bulk
 from numpy.random import Generator
 from pymatgen.io.ase import AseAtomsAdaptor
 from smol.cofe import ClusterSubspace
-from smol.moca import Ensemble, Sampler
 from smol.cofe.space.domain import get_allowed_species
+from smol.moca import Ensemble, Sampler
+from tc.sampler_data import SamplerData
 
-import tc
+import plotly.graph_objects as go
 
 # =====================================================================
 # Public API
@@ -63,92 +63,77 @@ def initialize_wl_sampler(
     )
     return sampler
 
-# =====================================================================
-# Helper functions
-# =====================================================================
-
 def generate_wl_plots(
-    sampler: Sampler,
+    data: SamplerData,
     temperatures: np.ndarray,
-    Cv: np.ndarray,
 ) -> None:
-    """Create a 4-panel figure (2 × 2)."""
+    """
+    Plot WL diagnostics using a *serialised* sampler snapshot.
+
+    Parameters
+    ----------
+    data : SamplerData
+        Output of ``load_sampler_data``.
+    temperatures, Cv
+        Same arrays you previously fed into the old function.
+    """
 
     # ------------------------------------------------------------------
-    # Figure / axes layout
+    # figure layout
     # ------------------------------------------------------------------
-    fig, axes = plt.subplots(
-        2, 2, figsize=(10, 8), sharex=False, constrained_layout=True
+    _, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=False, constrained_layout=True)
+    ax_conv, ax_dos   = axes[0]
+    ax_cv,   ax_hist  = axes[1]
+
+    # WL convergence  (top-left)
+    ax_conv.semilogy(data.mod_factor_trace, ".-")
+    ax_conv.set(
+        xlabel="Iteration",
+        ylabel="Modification factor (ln f)",
+        title="WL convergence",
     )
-    ax_conv, ax_dos   = axes[0]        # first row
-    ax_cv,   ax_hist  = axes[1]        # second row
 
-    # ==================================================================
-    # (1) WL convergence  (top-left)
-    # ==================================================================
-    mod_factor = sampler.samples.get_trace_value("mod_factor")
-    ax_conv.semilogy(mod_factor, ".-")
-    ax_conv.set_xlabel("Iteration")
-    ax_conv.set_ylabel("Modification factor")
-    ax_conv.set_title("WL convergence")
+    # Density of states  (top-right)
+    entropy     = data.entropy
+    nbins       = entropy.size
+    bin_centers = data.min_E + (np.arange(nbins) + 0.5) * data.bin_size
 
-    # ==================================================================
-    # (2) Density of states          (top-right)
-    # ==================================================================
-    entropy = sampler.samples.get_trace_value("entropy")[-1]
-    nbins   = entropy.size
-    kernel = sampler.mckernels[0]
-    bin_centers = kernel.spec.min_enthalpy + (np.arange(nbins) + 0.5) * kernel.bin_size
-
-    mask = entropy > 0
+    mask    = entropy > 0
     S_shift = entropy[mask] - entropy[mask].min()
-    dos = np.exp(S_shift - S_shift.max())
-    dos /= dos.sum()
+    dos     = np.exp(S_shift - S_shift.max())
+    dos    /= dos.sum()
 
     ax_dos.semilogy(bin_centers[mask], dos, ".-")
-    ax_dos.set_xlabel(r"$E$ (eV / supercell)")
-    ax_dos.set_ylabel("Density of states")
-    ax_dos.set_title("WL DOS estimate")
-    ax_dos.set_xlim(kernel.spec.min_enthalpy, kernel.spec.max_enthalpy)
-    ax_dos.legend()
+    ax_dos.set(
+        xlabel=r"$E$ (eV / supercell)",
+        ylabel="Density of states",
+        title="WL DOS estimate",
+        xlim=(data.min_E, data.max_E),
+    )
 
-    # ==================================================================
-    # (3) Heat-capacity curve        (bottom-left)
-    # ==================================================================
+    # Heat capacity  (bottom-left)
+    Cv = compute_thermodynamics(data, temperatures)
     ax_cv.plot(temperatures, Cv, lw=2)
-    ax_cv.set_xlabel("Temperature (K)")
-    ax_cv.set_ylabel(r"$C_v$ per supercell (eV K$^{-1}$)")
-    ax_cv.set_title("Wang-Landau $C_v(T)$")
+    ax_cv.set(
+        xlabel="Temperature (K)",
+        ylabel=r"$C_v$ per supercell (eV K$^{-1}$)",
+        title=r"Wang-Landau $C_v(T)$",
+    )
 
-    # ==================================================================
-    # (4) Histogram of *kept* configs (bottom-right)
-    # ==================================================================
-    # 4a) obtain energies of trace & map to bins
-    energies = sampler.samples.get_trace_value("enthalpy")
-
-    # helper: convert an enthalpy value to its bin number
-    idx = lambda E: int((E - kernel.spec.min_enthalpy) // kernel.bin_size)
-
-    counts   = np.zeros(nbins, dtype=int)
-    for E in energies:
-        b = idx(E)
-        if 0 <= b < nbins:          # ignore any value outside the WL window
-            counts[b] += 1
-
-    ax_hist.bar(bin_centers, counts, width=0.9*kernel.bin_size, align="center", edgecolor="k")
-    ax_hist.set_xlabel(r"$E$ (eV / supercell)")
-    ax_hist.set_ylabel("# kept configs")
-    ax_hist.set_title("Trace occupancy per energy bin")
-    ax_hist.set_xlim(kernel.spec.min_enthalpy, kernel.spec.max_enthalpy)
-
-    # annotate: unique occupancies vs. total kept
-    occs      = sampler.samples.get_trace_value("occupancy")
-    n_unique  = len({bytes(o) for o in occs})
-    ax_hist.annotate(
-        f"unique configs: {n_unique}/{len(occs)}",
-        xy=(0.98, 0.95), xycoords="axes fraction",
-        ha="right", va="top", fontsize=10,
-        bbox=dict(boxstyle="round,pad=0.25", fc="w")
+    # Histogram of kept configs  (bottom-right)
+    counts = data.histogram
+    ax_hist.bar(
+        bin_centers,
+        counts,
+        width=0.9 * data.bin_size,
+        align="center",
+        edgecolor="k",
+    )
+    ax_hist.set(
+        xlabel=r"$E$ (eV / supercell)",
+        ylabel="# kept configs",
+        title="Trace occupancy per energy bin",
+        xlim=(data.min_E, data.max_E),
     )
 
     plt.show()
@@ -188,45 +173,56 @@ def initialize_supercell_occupancy(
 
 
 def compute_thermodynamics(
-    sampler: Sampler,
+    data: SamplerData,
     temperatures_K: np.ndarray,
 ) -> np.ndarray:
-    """Compute heat capacity from Wang-Landau sampler results.
-    
+    """
+    Compute heat capacity from a *serialised* Wang-Landau snapshot.
+
     Parameters
     ----------
-    sampler : Sampler
-        Wang-Landau sampler with entropy and energy data
+    data : SamplerData
+        Output of ``load_sampler_data`` (holds entropy, energy grid, …).
     temperatures_K : np.ndarray
-        Temperature array (K)
-        
+        1-D array of temperatures in kelvin.
+
     Returns
     -------
     Cv : np.ndarray
-        Heat capacity per primitive cell (eV K^-1)
+        Heat capacity per supercell (eV K⁻¹).
     """
-    # Extract density of states from entropy
-    entropy = sampler.samples.get_trace_value("entropy")[-1]
-    mask = entropy > 0
-    ent_ref = entropy[mask] - entropy[mask].min()
-    dos_levels = np.exp(ent_ref - ent_ref.max())
-    dos_levels /= dos_levels.sum()
-    energy_levels = sampler.mckernels[0].levels
+    # ------------------------------------------------------------
+    # 1) Density of states  g(E)  from entropy  S = ln g
+    # ------------------------------------------------------------
+    entropy = data.entropy           # shape (nbins,)
+    mask    = entropy > 0            # visited bins only
 
-    # Compute thermodynamic properties
-    k_B = 8.617333262e-5  # eV / K
-    E_rr = energy_levels - energy_levels.min()
+    if mask.sum() < 2:
+        raise ValueError("Not enough visited bins to compute thermodynamics.")
 
-    Z = np.array([np.sum(dos_levels * np.exp(-E_rr / (k_B * T))) for T in temperatures_K])
-    U = np.array([np.sum(dos_levels * energy_levels * np.exp(-E_rr / (k_B * T))) for T in temperatures_K]) / Z
-    U2 = np.array([np.sum(dos_levels * energy_levels ** 2 * np.exp(-E_rr / (k_B * T))) for T in temperatures_K]) / Z
-    Cv = (U2 - U ** 2) / (k_B * temperatures_K ** 2)  # eV / K / atom
+    S_shift     = entropy[mask] - entropy[mask].min()
+    dos_levels  = np.exp(S_shift - S_shift.max())   # un-normalised g(E)
+    dos_levels /= dos_levels.sum()                  # normalise Σg = 1
+
+    energy_lvls = data.energy_levels[mask]          # same subset
+
+    # ------------------------------------------------------------
+    # 2) Canonical averages  U(T),  ⟨E²⟩(T)  →  C_v
+    # ------------------------------------------------------------
+    k_B   = 8.617333262e-5        # eV / K
+    E0    = energy_lvls.min()
+    E_rel = energy_lvls - E0      # shift so lowest level is zero
+
+    # vectorise over temperatures
+    beta  = 1.0 / (k_B * temperatures_K)            # (nT,)
+    expf  = np.exp(-np.outer(beta, E_rel))          # (nT, nbins_visited)
+
+    Z   = expf @ dos_levels                         # partition function
+    U   = (expf * energy_lvls).sum(axis=1) / Z      # mean energy
+    U2  = (expf * energy_lvls**2).sum(axis=1) / Z   # mean square energy
+
+    Cv  = (U2 - U**2) * beta**2                     # dU/dT  (eV/K per cell)
     return Cv
-
-# ── tc/wang_landau.py  (add near the bottom) ───────────────────────────
-import numpy as np
-import matplotlib.pyplot as plt
-import plotly.graph_objects as go
 
 # ────────────────────────────────────────────────────────────────────
 def plot_cv_surface(
@@ -343,33 +339,12 @@ def plot_cv_surface(
 
     raise ValueError("engine must be 'mpl' or 'plotly'")
 
-# ═════════════════════════════════════════════════════════════════════════════
-# 1)  Per-sampler helper – extract a normalised DOS *per bin index*
-# ═════════════════════════════════════════════════════════════════════════════
-def compute_dos_per_bin(sampler) -> np.ndarray:
-    """
-    Return the *normalised* DOS for a single Wang–Landau `sampler`,
-    laid out on the *bin index* grid (length == nbins).
-
-    Any zero–entropy bins are left at exactly zero so they may be
-    masked later for log plotting.
-    """
-    entropy = sampler.samples.get_trace_value("entropy")[-1]
-    # zero/negative entropy → unvisited bin
-    mask = entropy > 0
-    S_shift       = entropy[mask] - entropy[mask].min()
-    dos_normed    = np.zeros_like(entropy, dtype=float)
-    dos_normed[mask] = np.exp(S_shift - S_shift.max())
-    # global normalisation (Σ DOS = 1)
-    dos_normed   /= dos_normed.sum()
-    return dos_normed
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 2)  Convenience – crunch a *list* of samplers in one go
 # ═════════════════════════════════════════════════════════════════════════════
 def compute_dos_matrix(
-    samplers: Sequence,              # one WL sampler per composition
+    data_list: Sequence[SamplerData],  # one WL sampler per composition
 ) -> np.ndarray:
     """
     Stack the **normalised** DOS of many samplers into a 2-D array
@@ -377,24 +352,23 @@ def compute_dos_matrix(
 
     All samplers *must* share an identical energy window & bin size.
     """
-    if len(samplers) == 0:
+    if len(data_list) == 0:
         raise ValueError("Need at least one sampler.")
-    nbins = samplers[0].samples.get_trace_value("entropy")[-1].size
+    nbins = data_list[0].nbins
 
     dos_rows = []
-    for i, s in enumerate(samplers):
-        ent = s.samples.get_trace_value("entropy")[-1]
-        if ent.size != nbins:
+    for data in data_list:
+        if data.nbins != nbins:
             raise ValueError("All samplers must have the same number of bins.")
-        dos_rows.append(compute_dos_per_bin(s))
-    return np.vstack(dos_rows)                # shape: (n_ratios, nbins)
+        dos_rows.append(data.normalized_dos)
+    return np.vstack(dos_rows) # shape: (n_ratios, nbins)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 3)  2-D/3-D visualiser  (matplotlib OR plotly)
 # ═════════════════════════════════════════════════════════════════════════════
 def plot_dos_surface(
-    ratios          : np.ndarray,            # shape (n_ratios,)
+    ratios          : Sequence[float],            # shape (n_ratios,)
     dos_matrix      : np.ndarray,            # shape (n_ratios, nbins)
     *,
     mode            : str   = "surface",     # "surface" | "pcolormesh" | "scatter"
@@ -439,11 +413,9 @@ def plot_dos_surface(
         ax  = fig.add_subplot(111, projection="3d")
 
         if mode == "surface":
-            ax.plot_surface(B, R, Zlog, cmap=cmap,
-                            rstride=1, cstride=1, antialiased=True)
+            ax.plot_surface(B, R, Zlog, cmap=cmap, rstride=1, cstride=1, antialiased=True)
         elif mode == "scatter":
-            ax.scatter(B.ravel(), R.ravel(), Zlog.ravel(), c=Zlog.ravel(),
-                       cmap=cmap, s=10)
+            ax.scatter(B.ravel(), R.ravel(), Zlog.ravel(), c=Zlog.ravel(), cmap=cmap, s=10)
         else:
             raise ValueError("mode must be 'surface', 'pcolormesh' or 'scatter'")
 
@@ -504,32 +476,27 @@ def plot_dos_surface(
 # ──────────────────────────────────────────────────────────────────────
 # 1)  Per-sampler helper (already shown earlier; keep if you have it)
 # ──────────────────────────────────────────────────────────────────────
-def compute_histogram_per_bin(sampler) -> np.ndarray:
-    kernel      = sampler.mckernels[0]
-    min_E       = kernel.spec.min_enthalpy
-    bin_size    = kernel.bin_size
-    nbins       = kernel._entropy.size
-
-    counts      = np.zeros(nbins, dtype=int)
-    energies    = sampler.samples.get_trace_value("enthalpy")
-    idx         = ((energies - min_E) // bin_size).astype(int)
-    idx         = idx[(0 <= idx) & (idx < nbins)]
+def compute_histogram_per_bin(data: SamplerData) -> np.ndarray:
+    counts = np.zeros(data.nbins, dtype=int)
+    energies = data.energy_levels
+    idx = ((energies - data.min_E) // data.bin_size).astype(int)
+    idx = idx[(0 <= idx) & (idx < data.nbins)]
     np.add.at(counts, idx, 1)
     return counts
 
 
-def compute_histogram_matrix(samplers):
+def compute_histogram_matrix(data_list: Sequence[SamplerData]):
     """Stack per-bin counts → shape (n_ratios, nbins)."""
-    if len(samplers) == 0:
+    if len(data_list) == 0:
         raise ValueError("Need at least one sampler.")
-    nbins = samplers[0].mckernels[0]._entropy.size
+    nbins = data_list[0].nbins
 
     rows = []
-    for i, s in enumerate(samplers):
-        if s.mckernels[0]._entropy.size != nbins:
+    for data in data_list:
+        if data.nbins != nbins:
             raise ValueError("All samplers must share the same bin grid.")
-        rows.append(compute_histogram_per_bin(s))
-    return np.vstack(rows)                           # (n_ratios, nbins)
+        rows.append(compute_histogram_per_bin(data))
+    return np.vstack(rows) # (n_ratios, nbins)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -559,9 +526,6 @@ def plot_hist_heatmap(
     mask_zeros : bool
         If True (default) bins with 0 counts are transparent / NaN.
     """
-    import numpy as np, matplotlib.pyplot as plt
-    import plotly.graph_objects as go
-
     ratios      = np.asarray(ratios)
     hist_matrix = np.asarray(hist_matrix)
     if hist_matrix.shape[0] != ratios.size:

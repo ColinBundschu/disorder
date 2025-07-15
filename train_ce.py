@@ -36,11 +36,11 @@ def _single_wl(ratio, seed, *, ensemble, num_bins, window, replace_element, new_
 
 def main(argv=None):
     p = argparse.ArgumentParser()
-    p.add_argument("--nprocs", type=int, default=6, help="number of parallel processes (default 6)")
+    p.add_argument("--nprocs", type=int, default=17, help="number of parallel processes (default 17)")
     p.add_argument("--supercell_size", type=int, default=6, help="super-cell size (default 6x6x6)")
     p.add_argument("--num_wl_bins", type=int, default=200, help="number of Wang-Landau bins (default 200)")
     p.add_argument("--snapshot_counts",  type=int, default=100, help="number of random snapshots per ratio")
-    p.add_argument("--n_samples_per_site",  type=int, default=10_000, help="number of Wang-Landau samples per site")
+    p.add_argument("--n_samples_per_site",  type=int, default=5_000, help="number of Wang-Landau samples per site")
     p.add_argument("--debug",  action="store_true", help="run extra MACE/ensemble sanity tests")
     args = p.parse_args(argv)
 
@@ -51,7 +51,7 @@ def main(argv=None):
     rng = np.random.default_rng(123)
     replace_element = "Mg"
     new_elements=("Mg", "Fe")
-    ratios = list(np.linspace(0.1, 0.9, 33, endpoint=True))
+    ratios = list(np.linspace(0.1, 0.9, 17, endpoint=True))
     window=(40, 40)
 
     print(f"Creating initial random snapshot ensemble ({args.snapshot_counts} snapshots)…")
@@ -65,7 +65,7 @@ def main(argv=None):
     print(f"Starting Wang-Landau sampling over {args.nprocs} processes…")
     seed_root  = np.random.SeedSequence(42)
     child_seeds = [int(x) for x in seed_root.generate_state(len(ratios)).tolist()]
-    samplers = Parallel(n_jobs=args.nprocs, backend="loky")(
+    samplers = Parallel(n_jobs=args.nprocs, backend="loky", max_nbytes=None)(
         delayed(_single_wl)(
             r, s,
             ensemble=ensemble,
