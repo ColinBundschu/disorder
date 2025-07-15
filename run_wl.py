@@ -13,7 +13,7 @@ import tc.sampler_data
 
 
 def _run_wl_to_convergence(ratio, seed, ensemble, num_bins, window, replace_element, new_elements, snapshots_per_loop,
-                           n_samples_per_site, mod_factor_threshold=1e-6, max_loops=200):
+                           n_samples_per_site, supercell_size, mod_factor_threshold=1e-6, max_loops=200):
     rng = np.random.default_rng(seed)
     sampler = tc.wang_landau.initialize_wl_sampler(
         ensemble, rng=rng, ratio=ratio, num_bins=num_bins, seeds=[seed], window=window)
@@ -26,7 +26,7 @@ def _run_wl_to_convergence(ratio, seed, ensemble, num_bins, window, replace_elem
     while mod_factor > mod_factor_threshold and loop_count < max_loops:
         print(f"[p={ratio:4.2f}]  loop {loop_count}  ln f={mod_factor:8.2e}")
         sampler.run(nsamples_per_loop, occ_enc, thin_by=thin_by, progress=False)
-        filepath = os.path.join('samplers', f"sampler_{round(1000 * ratio)}.npz")
+        filepath = os.path.join('samplers', str(supercell_size), f"sampler_{round(1000 * ratio)}.npz")
         data = tc.sampler_data.dump_sampler_data(sampler, filepath)
         mod_factor = data.mod_factor_trace[-1]
         occ_enc = None
@@ -56,7 +56,7 @@ def main(argv=None):
     print(f"Using {args.nprocs} workers for parallel sampling.")
     Parallel(n_jobs=args.nprocs, backend="loky")(
         delayed(_run_wl_to_convergence)(ratio, seed, ensemble, args.num_wl_bins, args.window, replace_element,
-                                        new_elements, args.snapshots_per_loop, args.n_samples_per_site
+                                        new_elements, args.snapshots_per_loop, args.n_samples_per_site, args.supercell_size,
                                         ) for ratio, seed in zip(ratios, child_seeds)
     )
 
