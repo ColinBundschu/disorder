@@ -2,6 +2,7 @@
 
 import argparse
 import math
+import os
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -25,7 +26,8 @@ def _run_wl_to_convergence(ratio, seed, ensemble, num_bins, window, replace_elem
     while mod_factor > mod_factor_threshold and loop_count < max_loops:
         print(f"[p={ratio:4.2f}]  loop {loop_count}  ln f={mod_factor:8.2e}")
         sampler.run(nsamples_per_loop, occ_enc, thin_by=thin_by, progress=False)
-        data = tc.sampler_data.dump_sampler_data(sampler, f"sampler_{round(1000 * ratio)}")
+        filepath = os.path.join('samplers', f"sampler_{round(1000 * ratio)}.npz")
+        data = tc.sampler_data.dump_sampler_data(sampler, filepath)
         mod_factor = data.mod_factor_trace[-1]
         occ_enc = None
         loop_count += 1
