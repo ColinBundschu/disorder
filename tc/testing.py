@@ -8,9 +8,9 @@ from numpy.random import Generator
 from pymatgen.io.ase import AseAtomsAdaptor
 from smol.moca import Ensemble
 from tqdm.auto import tqdm
+from typing import Sequence
 
 import tc.dataset
-from smol.cofe.space.domain import get_allowed_species
 
 
 @dataclass
@@ -30,7 +30,7 @@ def evaluate_ensemble_vs_mace(
     replace_element: str,
     new_elements: tuple[str, str],
     n_test: int = 30,
-    comps: tuple[float, ...] = (0, 0.2, 0.5, 0.8, 1),
+    comps: Sequence[float] = (0, 0.2, 0.5, 0.8, 1),
 ) -> ErrorStats:
     """
     Compare CE (via Ensemble.processor.compute_property) to MACE on random configs.
@@ -105,104 +105,6 @@ def evaluate_ensemble_vs_mace(
     print(f" overall       RMSE = {rmse:6.2f} meV   |err|_max = {mabs:6.2f} meV")
 
     return ErrorStats(rmse, mabs, per_stats)
-
-def sample_configs_slow(
-    ensemble: Ensemble,
-    conv_cell: Atoms,
-    rng: Generator,
-    *,
-    replace_element: str,
-    new_elements: tuple[str, str],
-    n_samples: int = 100,
-    ratio: float = 0.5,
-) -> np.ndarray:
-    """
-    Compare CE (via Ensemble.processor.compute_property) to MACE on random configs.
-    Follows the 'WL sanity check' recipe exactly.
-    """
-    # ------------------------------------------------------------
-    # derived constants
-    # ------------------------------------------------------------
-    N_sc = round(ensemble.processor.size ** (1/3))
-    if N_sc**3 != ensemble.processor.size:
-        raise ValueError(f"Supercell size {ensemble.processor.size} is not a perfect cube.")
-    sc_tuple = (N_sc, N_sc, N_sc)
-    sc_mat   = np.diag(sc_tuple)
-    subspace = ensemble.processor.cluster_subspace
-
-    proto       = conv_cell * sc_tuple
-    repl_idx    = [i for i, at in enumerate(proto) if at.symbol == replace_element]
-    n_replace   = len(repl_idx)
-    A, B        = new_elements
-    n_A = int(round(ratio * n_replace))
-
-    ce_E = []
-    for _ in tqdm(range(n_samples), desc="CE samples"):
-        snap = proto.copy()
-        rng.shuffle(repl_idx)
-        snap.symbols[repl_idx]       = B
-        snap.symbols[repl_idx[:n_A]] = A
-
-        # -- CE via WL path --------------------------------------
-        pmg_s = AseAtomsAdaptor.get_structure(snap)  # pyright: ignore[reportArgumentType]
-        occ_enc = subspace.occupancy_from_structure(pmg_s, scmatrix=sc_mat, encode=True).astype(np.int32)
-        E_ce_wl = float(ensemble.processor.compute_property(occ_enc))
-        ce_E.append(E_ce_wl)
-
-    # print the mean, std dev, min, and max of the CE energies
-    ce_E = np.array(ce_E)
-    print(f"CE energies: mean = {1000 * ce_E.mean():8.2f} meV, std = {1000 * ce_E.std():8.2f} meV, min = {1000 * ce_E.min():8.2f} meV, max = {1000 * ce_E.max():8.2f} meV")
-    return ce_E
-
-
-def sample_configs_fast(
-    ensemble: Ensemble,
-    rng: Generator,
-    *,
-    n_samples: int = 100,
-    ratio: float = 0.5,
-) -> np.ndarray:
-    """
-    Compare CE (via Ensemble.processor.compute_property) to MACE on random configs.
-    Follows the 'WL sanity check' recipe exactly.
-    """
-
-    N_sc = round(ensemble.processor.size ** (1/3))
-    if N_sc**3 != ensemble.processor.size:
-        raise ValueError(f"Supercell size {ensemble.processor.size} is not a perfect cube.")
-    cat_idx = np.array(
-        [
-            i for i, sp in enumerate(get_allowed_species(ensemble.processor.structure))
-            if len(sp) > 1                          # >1 allowed species ⇒ cation site
-        ],
-        dtype=np.int32,
-    )
-    n_cations = cat_idx.size
-    n_A = round(n_cations * ratio)
-    n_B = n_cations - n_A
-    n_sites   = ensemble.num_sites
-
-    ce_E = []
-    for step in tqdm(range(n_samples)):
-        occ = np.zeros(n_sites, dtype=np.int32)
-        li_sites = rng.choice(cat_idx, round(n_cations * ratio), replace=False)
-        occ[li_sites] = 1
-
-        # ---- sanity checks ---------------------------------------
-        n_A_actual = (occ[cat_idx] == 1).sum()
-        n_B_actual = (occ[cat_idx] == 0).sum()
-        if (n_A != n_A_actual) or (n_B != n_B_actual):
-            raise ValueError(f"Expected {n_A} Li and {n_B} Mn, but got {n_A_actual} Li and {n_B_actual} Mn.")
-
-        # ---- CE energy ------------------------------------------
-        corr  = ensemble.compute_feature_vector(occ)              # raw counts
-        E_sup = float(ensemble.natural_parameters @ corr)         # eV / cell
-        ce_E.append(E_sup)
-
-    # print the mean, std dev, min, and max of the CE energies
-    ce_E = np.array(ce_E)
-    print(f"ratio: {ratio} CE energies: mean = {1000 * ce_E.mean():8.2f} meV, std = {1000 * ce_E.std():8.2f} meV, min = {1000 * ce_E.min():8.2f} meV, max = {1000 * ce_E.max():8.2f} meV")
-    return ce_E
 
 def check_sampler_energies(
     sampler,

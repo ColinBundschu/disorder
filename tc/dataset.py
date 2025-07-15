@@ -11,26 +11,19 @@ from sklearn.model_selection import KFold
 from smol.cofe import ClusterExpansion, ClusterSubspace, StructureWrangler
 from smol.moca import Ensemble
 from tqdm.auto import tqdm
-from monty.serialization import dumpfn
 
-def create_canonical_ensemble(conv_cell, calc, replace_element, new_elements, ensemble_size, ratio, endpoint_energies, supercell_diag, snapshots, reuse_site_map):
-    ce = ce_from_snapshots(conv_cell, calc, replace_element, new_elements, endpoint_energies, supercell_diag, snapshots, reuse_site_map)
-
-    # Create a canonical ensemble
-    ensemble = Ensemble.from_cluster_expansion(ce, np.diag((ensemble_size, ensemble_size, ensemble_size)))
-    ensemble_and_endpoints = (ensemble, endpoint_energies)
-    ratio_str = f"{round(ratio*1000)}" if ratio is not None else "default"
-    dumpfn(ensemble_and_endpoints, f"{''.join(new_elements)}O_ensemble{ensemble_size}_{ratio_str}.json.gz", indent=2)
-    return ensemble
-
-def ce_from_snapshots(conv_cell, calc, replace_element, new_elements, endpoint_energies, supercell_diag, snapshots, reuse_site_map):
+def create_canonical_ensemble(conv_cell, calc, replace_element, new_elements, ensemble_size, endpoint_energies, supercell_diag, snapshots, reuse_site_map):
+    # Create a cluster expansion from the provided snapshots
     pmg_structs = []
     for snapshot in tqdm(snapshots, desc="MACE energies"):
         pmg_struct = AseAtomsAdaptor.get_structure(snapshot) # pyright: ignore[reportArgumentType]
         pmg_struct.energy = calculate_mace_energy(calc, snapshot, new_elements, endpoint_energies)
         pmg_structs.append(pmg_struct)
     ce = cluster_expansion_from_pmg_structs(conv_cell, {1: 100, 2: 10.0, 3: 8.0, 4: 6.0}, supercell_diag, pmg_structs, replace_element, new_elements, reuse_site_map)
-    return ce
+
+    # Create a canonical ensemble
+    ensemble = Ensemble.from_cluster_expansion(ce, np.diag((ensemble_size, ensemble_size, ensemble_size)))
+    return ensemble
 
 def calculate_endpoint_energies(conv_cell, calc, replace_element, new_elements):
     replace_idx = [i for i, at in enumerate(conv_cell) if at.symbol == replace_element] # type: ignore
@@ -117,7 +110,7 @@ def make_snapshots(
         replace_element: str,
         new_elements: tuple[str, str],
         count: int,
-        ratio: float,
+        ratios: list[float],
         ) -> list[Atoms]:
     if len(new_elements) != 2:
         raise NotImplementedError("Only two new elements are supported for replacement.")
@@ -128,14 +121,18 @@ def make_snapshots(
     n_replace  = len(replace_idx)
 
     snapshots: list[Atoms] = []
-    for _ in range(count):
-        snapshot = proto.copy()
+    for ratio in ratios:
+        existing_configs = set()
         n_A = int(round(ratio * n_replace))
-        A_sites = rng.choice(replace_idx, size=n_A, replace=False)
-        snapshot.symbols[replace_idx] = B # Set all to B first
-        snapshot.symbols[A_sites] = A # Set selected sites to A
-        snapshots.append(snapshot)
-
+        for _ in range(count):
+            snapshot = proto.copy()
+            A_sites = sorted(rng.choice(replace_idx, size=n_A, replace=False))
+            if tuple(A_sites) in existing_configs:
+                continue
+            existing_configs.add(tuple(A_sites))
+            snapshot.symbols[replace_idx] = B # Set all to B first
+            snapshot.symbols[A_sites] = A # Set selected sites to A
+            snapshots.append(snapshot)
     return snapshots
 
 def mace_E_from_occ(

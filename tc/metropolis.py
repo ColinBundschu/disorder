@@ -102,7 +102,7 @@ def run_metropolis_heat_capacity(
     # ------------------------------------------------------------------
     # 2) Generate an initial configuration at the desired composition
     # ------------------------------------------------------------------
-    occ_enc = _initialize_supercell_occupancy(
+    occ_enc = initialize_supercell_occupancy(
         ensemble, rng, replace_element, new_elements, ratio
     )
 
@@ -141,7 +141,7 @@ def plot_cv_curve(temperatures: np.ndarray, Cv: np.ndarray) -> None:
 # Internal helpers (copied / adapted from wang_landau.py)
 # -----------------------------------------------------------------------------
 
-def _initialize_supercell_occupancy(
+def initialize_supercell_occupancy(
     ensemble: Ensemble,
     rng: Generator,
     replace_element: str,
