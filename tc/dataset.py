@@ -10,12 +10,11 @@ from sklearn.metrics import max_error, mean_squared_error
 from sklearn.model_selection import KFold
 from smol.cofe import ClusterExpansion, ClusterSubspace, StructureWrangler
 from smol.moca import Ensemble
-from tqdm.auto import tqdm
 
 def create_canonical_ensemble(conv_cell, calc, replace_element, new_elements, ensemble_size, endpoint_energies, supercell_diag, snapshots, reuse_site_map):
     # Create a cluster expansion from the provided snapshots
     pmg_structs = []
-    for snapshot in tqdm(snapshots, desc="MACE energies"):
+    for snapshot in snapshots:
         pmg_struct = AseAtomsAdaptor.get_structure(snapshot) # pyright: ignore[reportArgumentType]
         pmg_struct.energy = calculate_mace_energy(calc, snapshot, new_elements, endpoint_energies)
         pmg_structs.append(pmg_struct)
@@ -74,7 +73,7 @@ def cluster_expansion_from_pmg_structs(
     wrangler = StructureWrangler(subspace)
     supercell_matrix = np.diag(supercell_diag)
     site_map = None
-    for ent in tqdm(entries, desc="Adding"):
+    for ent in entries:
         wrangler.add_entry(ent, supercell_matrix=supercell_matrix, site_mapping=site_map, verbose=False)
         if site_map is None and reuse_site_map:
             site_map = wrangler.entries[-1].data["site_mapping"]
