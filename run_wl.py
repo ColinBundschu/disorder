@@ -16,7 +16,7 @@ def _run_wl_to_convergence(ratio, seed, ensemble, num_bins, window, replace_elem
                            n_samples_per_site, supercell_size, mod_factor_threshold=1e-6, max_loops=200):
     rng = np.random.default_rng(seed)
     sampler = tc.wang_landau.initialize_wl_sampler(
-        ensemble, rng=rng, ratio=ratio, num_bins=num_bins, seeds=[seed], window=window)
+        ensemble, rng=rng, ratio=ratio, num_bins=num_bins, seeds=[seed], window=(window, window))
     occ_enc = tc.wang_landau.initialize_supercell_occupancy(ensemble, rng, replace_element, new_elements, ratio)
     mod_factor = 1
 
@@ -39,6 +39,7 @@ def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--nprocs", type=int, default=33, help="number of parallel processes (default 17)")
     p.add_argument("--supercell_size", type=int, default=6, help="super-cell size (default 6x6x6)")
+    p.add_argument("--window", type=int, default=40, help="Wang-Landau energy window in stddevs of random")
     p.add_argument("--num_wl_bins", type=int, default=200, help="number of Wang-Landau bins (default 200)")
     p.add_argument("--snapshots_per_loop",  type=int, default=100, help="number of random snapshots per ratio")
     p.add_argument("--n_samples_per_site",  type=int, default=10_000_000, help="number of Wang-Landau samples per site")
@@ -49,8 +50,11 @@ def main(argv=None):
     replace_element = "Mg"
     ratios = list(np.linspace(0.1, 0.9, 33, endpoint=True))
     new_elements=("Mg", "Fe")
-    filename = f"{''.join(new_elements)}O_ensemble{args.supercell_size}.json.gz"
-    ensemble, _ = loadfn(filename)
+    filepath = os.path.join("/mnt", "z", "disorder", f"{''.join(new_elements)}O_ensemble{args.supercell_size}.json.gz")
+
+    print(f"Loading ensemble from {filepath}...")
+    ensemble, _ = loadfn(filepath)
+    print(f"Ensemble loaded.")
 
     child_seeds = [int(x) for x in seed_root.generate_state(len(ratios)).tolist()]
     print(f"Using {args.nprocs} workers for parallel sampling.")
