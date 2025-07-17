@@ -55,7 +55,7 @@ def dump_sampler_data(sampler: Sampler, path: str | Path) -> SamplerData:
         histogram=sampler.samples.get_trace_value("histogram")[-1],
         energy_levels=kernel._levels,
         mod_factor_trace=sampler.samples.get_trace_value("mod_factor"),
-        enthalpy_trace=sampler.samples.get_trace_value("enthalpy").astype(np.float64)
+        enthalpy_trace=sampler.samples.get_trace_value("enthalpy").astype(np.float64),
         bin_size=float(kernel.bin_size),
         min_E=float(kernel.spec.min_enthalpy),
         max_E=float(kernel.spec.max_enthalpy),
