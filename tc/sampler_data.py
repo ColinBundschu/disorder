@@ -63,7 +63,6 @@ def dump_sampler_data(sampler: Sampler, path: str | Path) -> SamplerData:
 
     path = Path(path).with_suffix(".npz")
     np.savez_compressed(path, **asdict(data))      # binary, no precision loss
-    print(f"[dump_sampler_data] wrote {path} ({path.stat().st_size/1024:.1f} kB)")
     return data
 
 
