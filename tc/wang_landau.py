@@ -45,8 +45,13 @@ def initialize_wl_sampler(
     min_E = mu - window_low * sigma
     max_E = mu + window_high * sigma
     bin_size = (max_E - min_E) / num_bins
-    max_E = min_E + num_bins * bin_size  # ensure max_E is exact to avoid rounding issues
-    print(f"Energy window : [{min_E:.3f}, {max_E:.3f}] eV ({num_bins} bins, {bin_size:.4f} eV each)")
+    max_E = np.nextafter(min_E + num_bins * bin_size, min_E)
+    # print(f"Energy window : [{min_E:.3f}, {max_E:.3f}] eV ({num_bins} bins, {bin_size:.4f} eV each)")
+    actual_num_bins = len(np.arange(min_E, max_E, bin_size))
+    if actual_num_bins != num_bins:
+        raise ValueError(f"Wang-Landau would create {actual_num_bins} bins, but you requested {num_bins}.  "
+            "This is due to floating-point rounding; adjust max_E (e.g. np.nextafter) or bin_size so the counts match."
+        )
 
     # ------------------------------------------------------------
     # 2) Build the Wang-Landau sampler
@@ -121,6 +126,7 @@ def generate_wl_plots(
     )
 
     # Histogram of kept configs  (bottom-right)
+    # counts = compute_histogram_per_bin(data)
     counts = data.histogram
     ax_hist.bar(
         bin_centers,
@@ -173,55 +179,39 @@ def initialize_supercell_occupancy(
 
 
 def compute_thermodynamics(
-    data: SamplerData,
+    sampler: SamplerData,
     temperatures_K: np.ndarray,
 ) -> np.ndarray:
-    """
-    Compute heat capacity from a *serialised* Wang-Landau snapshot.
-
+    """Compute heat capacity from Wang-Landau sampler results.
+    
     Parameters
     ----------
-    data : SamplerData
-        Output of ``load_sampler_data`` (holds entropy, energy grid, …).
+    sampler : Sampler
+        Wang-Landau sampler with entropy and energy data
     temperatures_K : np.ndarray
-        1-D array of temperatures in kelvin.
-
+        Temperature array (K)
+        
     Returns
     -------
     Cv : np.ndarray
-        Heat capacity per supercell (eV K⁻¹).
+        Heat capacity per primitive cell (eV K^-1)
     """
-    # ------------------------------------------------------------
-    # 1) Density of states  g(E)  from entropy  S = ln g
-    # ------------------------------------------------------------
-    entropy = data.entropy           # shape (nbins,)
-    mask    = entropy > 0            # visited bins only
+    # Extract density of states from entropy
+    entropy = sampler.entropy
+    mask = entropy > 0
+    ent_ref = entropy[mask] - entropy[mask].min()
+    dos_levels = np.exp(ent_ref - ent_ref.max())
+    dos_levels /= dos_levels.sum()
+    energy_levels = sampler.energy_levels[mask]
 
-    if mask.sum() < 2:
-        raise ValueError("Not enough visited bins to compute thermodynamics.")
+    # Compute thermodynamic properties
+    k_B = 8.617333262e-5  # eV / K
+    E_rr = energy_levels - energy_levels.min()
 
-    S_shift     = entropy[mask] - entropy[mask].min()
-    dos_levels  = np.exp(S_shift - S_shift.max())   # un-normalised g(E)
-    dos_levels /= dos_levels.sum()                  # normalise Σg = 1
-
-    energy_lvls = data.energy_levels[mask]          # same subset
-
-    # ------------------------------------------------------------
-    # 2) Canonical averages  U(T),  ⟨E²⟩(T)  →  C_v
-    # ------------------------------------------------------------
-    k_B   = 8.617333262e-5        # eV / K
-    E0    = energy_lvls.min()
-    E_rel = energy_lvls - E0      # shift so lowest level is zero
-
-    # vectorise over temperatures
-    beta  = 1.0 / (k_B * temperatures_K)            # (nT,)
-    expf  = np.exp(-np.outer(beta, E_rel))          # (nT, nbins_visited)
-
-    Z   = expf @ dos_levels                         # partition function
-    U   = (expf * energy_lvls).sum(axis=1) / Z      # mean energy
-    U2  = (expf * energy_lvls**2).sum(axis=1) / Z   # mean square energy
-
-    Cv  = (U2 - U**2) * beta**2                     # dU/dT  (eV/K per cell)
+    Z = np.array([np.sum(dos_levels * np.exp(-E_rr / (k_B * T))) for T in temperatures_K])
+    U = np.array([np.sum(dos_levels * energy_levels * np.exp(-E_rr / (k_B * T))) for T in temperatures_K]) / Z
+    U2 = np.array([np.sum(dos_levels * energy_levels ** 2 * np.exp(-E_rr / (k_B * T))) for T in temperatures_K]) / Z
+    Cv = (U2 - U ** 2) / (k_B * temperatures_K ** 2)  # eV / K / atom
     return Cv
 
 # ────────────────────────────────────────────────────────────────────
@@ -243,9 +233,9 @@ def plot_cv_surface(
     ratios, temperatures_K, Cv_matrix
         Same meaning as before.
     mode
-        "surface"        – a mesh surface (3-D)
-        "pcolormesh"     – 2-D colour-map
-        **"scatter"**    – coloured points at the grid nodes
+        "surface"        - a mesh surface (3-D)
+        "pcolormesh"     - 2-D colour-map
+        **"scatter"**    - coloured points at the grid nodes
     engine
         "mpl"     → Matplotlib backend
         "plotly"  → Plotly backend (interactive)
@@ -354,13 +344,13 @@ def compute_dos_matrix(
     """
     if len(data_list) == 0:
         raise ValueError("Need at least one sampler.")
-    nbins = data_list[0].nbins
+    nbins = min([data.nbins for data in data_list])
 
     dos_rows = []
     for data in data_list:
-        if data.nbins != nbins:
+        if nbins != data.nbins:
             raise ValueError("All samplers must have the same number of bins.")
-        dos_rows.append(data.normalized_dos)
+        dos_rows.append(data.normalized_dos[:nbins])
     return np.vstack(dos_rows) # shape: (n_ratios, nbins)
 
 
@@ -477,9 +467,9 @@ def plot_dos_surface(
 # 1)  Per-sampler helper (already shown earlier; keep if you have it)
 # ──────────────────────────────────────────────────────────────────────
 def compute_histogram_per_bin(data: SamplerData) -> np.ndarray:
-    counts = np.zeros(data.nbins, dtype=int)
-    energies = data.energy_levels
-    idx = ((energies - data.min_E) // data.bin_size).astype(int)
+    counts  = np.zeros(data.nbins, dtype=int)
+    # use the ENTIRE enthalpy trace, not the grid
+    idx = ((data.enthalpy_trace - data.min_E) // data.bin_size).astype(int)
     idx = idx[(0 <= idx) & (idx < data.nbins)]
     np.add.at(counts, idx, 1)
     return counts
@@ -495,7 +485,7 @@ def compute_histogram_matrix(data_list: Sequence[SamplerData]):
     for data in data_list:
         if data.nbins != nbins:
             raise ValueError("All samplers must share the same bin grid.")
-        rows.append(compute_histogram_per_bin(data))
+        rows.append(data.histogram)
     return np.vstack(rows) # (n_ratios, nbins)
 
 
@@ -599,7 +589,7 @@ def sample_configs_fast(
     n_B = n_cations - n_A
     n_sites   = ensemble.num_sites
 
-    print(f"Sampling {n_samples} configurations with {n_A} Li and {n_B} Mn...")
+    # print(f"Sampling {n_samples} configurations with {n_A} Li and {n_B} Mn...")
     ce_E = []
     for _ in range(n_samples):
         occ = np.ones(n_sites, dtype=np.int32)
@@ -619,5 +609,5 @@ def sample_configs_fast(
 
     # print the mean, std dev, min, and max of the CE energies
     ce_E = np.array(ce_E)
-    print(f"ratio: {ratio} CE energies: mean = {1000 * ce_E.mean():8.2f} meV, std = {1000 * ce_E.std():8.2f} meV, min = {1000 * ce_E.min():8.2f} meV, max = {1000 * ce_E.max():8.2f} meV")
+    # print(f"ratio: {ratio} CE energies: mean = {1000 * ce_E.mean():8.2f} meV, std = {1000 * ce_E.std():8.2f} meV, min = {1000 * ce_E.min():8.2f} meV, max = {1000 * ce_E.max():8.2f} meV")
     return ce_E

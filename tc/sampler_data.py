@@ -8,32 +8,39 @@ from smol.moca import Sampler
 
 @dataclass
 class SamplerData:
-    """Minimal snapshot of a finished Wang-Landau sampler (full precision)."""
-    entropy: np.ndarray   # log g(E)  (float64)
-    histogram: np.ndarray   # final histogram (int64)
-    energy_levels: np.ndarray   # bin centre energies (float64)
-    mod_factor_trace: np.ndarray   # ln f per iteration (float64)
+    entropy:            np.ndarray   # full window
+    histogram:          np.ndarray
+    energy_levels:      np.ndarray   # full window (same length)
+    mod_factor_trace:   np.ndarray
+    enthalpy_trace: np.ndarray
     bin_size: float
-    min_E: float
-    max_E: float
+    min_E:   float
+    max_E:   float
 
     @property
     def nbins(self) -> int:
         return self.entropy.size
 
     @property
+    def visited(self) -> np.ndarray:
+        """Boolean mask of bins that were visited at least once."""
+        return self.entropy > 0
+
+    @property
     def normalized_dos(self) -> np.ndarray:
-        """
-        Return the *normalised* density of states (DOS).
-        Any zero-entropy bins are left at exactly zero so they may be
-        masked later for log plotting.
-        """
-        mask = self.entropy > 0 # zero/negative entropy → unvisited bin
-        S_shift = self.entropy[mask] - self.entropy[mask].min()
-        dos_normed = np.zeros_like(self.entropy, dtype=float)
-        dos_normed[mask] = np.exp(S_shift - S_shift.max())
-        dos_normed /= dos_normed.sum() # global normalisation (Σ DOS = 1)
-        return dos_normed
+        """Σ DOS = 1 on the full grid (unvisited bins = 0)."""
+        mask = self.visited
+        S = self.entropy[mask] - self.entropy[mask].min()
+        g = np.zeros_like(self.entropy, dtype=float)
+        g[mask] = np.exp(S - S.max())
+        g /= g.sum()
+        return g
+
+    @property
+    def visited_energy(self) -> np.ndarray:
+        """Energy grid restricted to visited bins."""
+        return self.energy_levels[self.visited]
+
 
 
 def dump_sampler_data(sampler: Sampler, path: str | Path) -> SamplerData:
@@ -46,8 +53,9 @@ def dump_sampler_data(sampler: Sampler, path: str | Path) -> SamplerData:
     data = SamplerData(
         entropy=sampler.samples.get_trace_value("entropy")[-1],
         histogram=sampler.samples.get_trace_value("histogram")[-1],
-        energy_levels=kernel.levels,
+        energy_levels=kernel._levels,
         mod_factor_trace=sampler.samples.get_trace_value("mod_factor"),
+        enthalpy_trace=sampler.samples.get_trace_value("enthalpy").astype(np.float64)
         bin_size=float(kernel.bin_size),
         min_E=float(kernel.spec.min_enthalpy),
         max_E=float(kernel.spec.max_enthalpy),
@@ -55,8 +63,7 @@ def dump_sampler_data(sampler: Sampler, path: str | Path) -> SamplerData:
 
     path = Path(path).with_suffix(".npz")
     np.savez_compressed(path, **asdict(data))      # binary, no precision loss
-    print(f"[dump_sampler_data] wrote {path}  "
-          f"({path.stat().st_size/1024:.1f} kB)")
+    print(f"[dump_sampler_data] wrote {path} ({path.stat().st_size/1024:.1f} kB)")
     return data
 
 

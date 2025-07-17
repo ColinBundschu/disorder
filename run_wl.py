@@ -36,7 +36,7 @@ def _run_wl_to_convergence(
     thin_by = max(1, math.ceil(nsamples_per_loop / snapshots_per_loop))
     loop_count = 0
     while mod_factor > mod_factor_threshold and loop_count < max_loops:
-        print(f"[p={ratio:4.2f}]  loop {loop_count}  ln f={mod_factor:8.2e}")
+        print(f"[p={ratio:5.3f}]  loop {loop_count}  ln f={mod_factor:8.2e}")
         sampler.run(nsamples_per_loop, occ_enc, thin_by=thin_by, progress=False)
         filepath = os.path.join('samplers', str(supercell_size), f"sampler_{round(1000 * ratio)}.npz")
         data = tc.sampler_data.dump_sampler_data(sampler, filepath)
@@ -45,7 +45,7 @@ def _run_wl_to_convergence(
         loop_count += 1
 
     status = "CONVERGED" if mod_factor <= mod_factor_threshold else "INCOMPLETE"
-    print(f"[p={ratio:4.2f}] {status} after {loop_count} loop(s); ln f={mod_factor:8.2e}")
+    print(f"[p={ratio:5.3f}] {status} after {loop_count} loop(s); ln f={mod_factor:8.2e}")
 
 def main(argv=None):
     p = argparse.ArgumentParser()
@@ -70,7 +70,7 @@ def main(argv=None):
 
     child_seeds = [int(x) for x in seed_root.generate_state(len(ratios)).tolist()]
     print(f"Using {args.nprocs} workers for parallel sampling.")
-    Parallel(n_jobs=args.nprocs, backend="loky")(
+    Parallel(n_jobs=args.nprocs, backend="multiprocessing")(
         delayed(_run_wl_to_convergence)(ratio, seed, ensemble, args.num_wl_bins, args.window, replace_element,
                                         new_elements, args.snapshots_per_loop, args.n_samples_per_site, args.supercell_size,
                                         ) for ratio, seed in zip(ratios, child_seeds)
