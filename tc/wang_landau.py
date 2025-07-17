@@ -45,8 +45,7 @@ def initialize_wl_sampler(
     min_E = mu - window_low * sigma
     max_E = mu + window_high * sigma
     bin_size = (max_E - min_E) / num_bins
-    max_E = np.nextafter(min_E + num_bins * bin_size, min_E)
-    # print(f"Energy window : [{min_E:.3f}, {max_E:.3f}] eV ({num_bins} bins, {bin_size:.4f} eV each)")
+    max_E = min_E + num_bins * bin_size - 1e-8*(max_E - min_E)/num_bins  # avoid floating-point rounding issues
     actual_num_bins = len(np.arange(min_E, max_E, bin_size))
     if actual_num_bins != num_bins:
         raise ValueError(f"Wang-Landau would create {actual_num_bins} bins, but you requested {num_bins}.  "
