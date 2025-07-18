@@ -41,6 +41,7 @@ def main(argv=None):
     p.add_argument("--num_wl_bins", type=int, default=200, help="number of Wang-Landau bins (default 200)")
     p.add_argument("--snapshot_counts",  type=int, default=100, help="number of random snapshots per ratio")
     p.add_argument("--n_samples_per_site",  type=int, default=5_000, help="number of Wang-Landau samples per site")
+    p.add_argument("--initial_window", type=int, default=40, help="Initial Wang-Landau energy window in stddevs of random")
     p.add_argument("--debug",  action="store_true", help="run extra MACE/ensemble sanity tests")
     args = p.parse_args(argv)
 
@@ -52,7 +53,7 @@ def main(argv=None):
     replace_element = "Mg"
     new_elements=("Mg", "Fe")
     ratios = list(np.linspace(0.1, 0.9, 17, endpoint=True))
-    window=(40, 40)
+    window=(args.initial_window, args.initial_window)
 
     print(f"Creating initial random snapshot ensemble ({args.snapshot_counts} snapshots)…")
     endpoint_energies = tc.dataset.calculate_endpoint_energies(conv_cell, calc, replace_element, new_elements)
@@ -62,22 +63,34 @@ def main(argv=None):
     if args.debug:
         tc.testing.evaluate_ensemble_vs_mace(ensemble, calc, conv_cell, rng, endpoint_energies, replace_element=replace_element, new_elements=new_elements, comps=ratios)
 
-    print(f"Starting Wang-Landau sampling over {args.nprocs} processes…")
+    print(f"Starting Wang-Landau sampling over {args.nprocs} processes and initial window {window}…")
     seed_root  = np.random.SeedSequence(42)
     child_seeds = [int(x) for x in seed_root.generate_state(len(ratios)).tolist()]
-    samplers = Parallel(n_jobs=args.nprocs, backend="loky", max_nbytes=None)(
-        delayed(_single_wl)(
-            r, s,
-            ensemble=ensemble,
-            num_bins=args.num_wl_bins,
-            window=window,
-            replace_element=replace_element,
-            new_elements=new_elements,
-            snapshot_counts=args.snapshot_counts,
-            n_samples_per_site=args.n_samples_per_site
+
+    while True:
+        samplers = Parallel(n_jobs=args.nprocs, backend="multiprocessing", max_nbytes=None)(
+            delayed(_single_wl)(
+                r, s,
+                ensemble=ensemble,
+                num_bins=args.num_wl_bins,
+                window=window,
+                replace_element=replace_element,
+                new_elements=new_elements,
+                snapshot_counts=args.snapshot_counts,
+                n_samples_per_site=args.n_samples_per_site
+            )
+            for r, s in zip(ratios, child_seeds)
         )
-        for r, s in zip(ratios, child_seeds)
-    )
+        for sampler in samplers:
+            entropy = sampler.samples.get_trace_value("entropy")[-1]
+            if entropy[0] > 0 or entropy[-1] > 0:
+                print(f"Found occupied bins at the edges, re-running with a larger window {window}.")
+                window = (window[0] + 10, window[1] + 10)
+                window_big_enough = False
+                break
+        else:
+            print(f"Finished sampling with window {window}.")
+            break # The window is sufficiently large, exit the loop
 
     print("Computing final CE from Wang-Landau sampled configurations…")
     wl_occupancies = [occ for sampler in samplers for occ in sampler.samples.get_trace_value("occupancy")]
