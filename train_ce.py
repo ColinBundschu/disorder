@@ -52,7 +52,7 @@ def main(argv=None):
     rng = np.random.default_rng(123)
     replace_element = "Mg"
     new_elements=("Mg", "Fe")
-    ratios = list(np.linspace(0.1, 0.9, 17, endpoint=True))
+    ratios = list(np.linspace(0.1, 0.9, 33, endpoint=True))
     window=(args.initial_window, args.initial_window)
 
     print(f"Creating initial random snapshot ensemble ({args.snapshot_counts} snapshots)…")
@@ -68,7 +68,8 @@ def main(argv=None):
     child_seeds = [int(x) for x in seed_root.generate_state(len(ratios)).tolist()]
 
     while True:
-        samplers = Parallel(n_jobs=args.nprocs, backend="multiprocessing", max_nbytes=None)(
+        print(f"Sampling {len(ratios)} cation ratios with {args.n_samples_per_site} samples per site…")
+        samplers = Parallel(n_jobs=args.nprocs, backend="loky", max_nbytes=None)(
             delayed(_single_wl)(
                 r, s,
                 ensemble=ensemble,
@@ -84,8 +85,8 @@ def main(argv=None):
         for sampler in samplers:
             entropy = sampler.samples.get_trace_value("entropy")[-1]
             if entropy[0] > 0 or entropy[-1] > 0:
-                print(f"Found occupied bins at the edges, re-running with a larger window {window}.")
                 window = (window[0] + 10, window[1] + 10)
+                print(f"Found occupied bins at the edges, re-running with a larger window {window}.")
                 window_big_enough = False
                 break
         else:
