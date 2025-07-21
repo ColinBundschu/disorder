@@ -41,18 +41,18 @@ def main(argv=None):
     p.add_argument("--num_wl_bins", type=int, default=200, help="number of Wang-Landau bins (default 200)")
     p.add_argument("--snapshot_counts",  type=int, default=100, help="number of random snapshots per ratio")
     p.add_argument("--n_samples_per_site",  type=int, default=5_000, help="number of Wang-Landau samples per site")
-    p.add_argument("--initial_window", type=int, default=40, help="Initial Wang-Landau energy window in stddevs of random")
+    p.add_argument("--initial_window", type=int, default=30, help="Initial Wang-Landau energy window in stddevs of random")
     p.add_argument("--debug",  action="store_true", help="run extra MACE/ensemble sanity tests")
     args = p.parse_args(argv)
 
     # Set up the initial conditions
     supercell_diag = (args.supercell_size, args.supercell_size, args.supercell_size)
     conv_cell = bulk("MgO", crystalstructure="rocksalt", a=4.2, cubic=True)
-    calc = mace_mp(model="large", device="cuda", default_dtype="float32")
+    calc = mace_mp(model="large", device="cuda", default_dtype="float64")
     rng = np.random.default_rng(123)
     replace_element = "Mg"
     new_elements=("Mg", "Fe")
-    ratios = list(np.linspace(0.1, 0.9, 33, endpoint=True))
+    ratios = list(np.linspace(0.1, 0.9, 17, endpoint=True))
     window=(args.initial_window, args.initial_window)
 
     print(f"Creating initial random snapshot ensemble ({args.snapshot_counts} snapshots)…")

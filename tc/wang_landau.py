@@ -16,6 +16,25 @@ import plotly.graph_objects as go
 # Public API
 # =====================================================================
 
+def Tc_from_Cv(temperatures_K: np.ndarray, Cv: np.ndarray) -> tuple[float, float]:
+    i = int(np.argmax(Cv))
+    Tc = temperatures_K[i]
+
+    # parabolic refinement if interior point
+    if 0 < i < len(Cv)-1:
+        x1,x2,x3 = temperatures_K[i-1:i+2]
+        y1,y2,y3 = Cv[i-1:i+2]
+        denom = (y1 - 2*y2 + y3)
+        if denom != 0:
+            Tc = x2 + 0.5 * (y1 - y3) * (x3 - x1) / denom
+
+    # simple HWHM uncertainty
+    half_max  = 0.5 * Cv[i]
+    left = np.interp(half_max, Cv[:i][::-1], temperatures_K[:i][::-1])
+    right = np.interp(half_max, Cv[i:], temperatures_K[i:])
+    dTc = 0.5 * (right - left)
+    return Tc, dTc
+
 def initialize_wl_sampler(
     ensemble: Ensemble,
     *,

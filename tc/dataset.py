@@ -10,6 +10,8 @@ from sklearn.metrics import max_error, mean_squared_error
 from sklearn.model_selection import KFold
 from smol.cofe import ClusterExpansion, ClusterSubspace, StructureWrangler
 from smol.moca import Ensemble
+from ase.optimize import FIRE
+from ase.filters import UnitCellFilter
 
 def create_canonical_ensemble(conv_cell, calc, replace_element, new_elements, ensemble_size, endpoint_energies, supercell_diag, snapshots, reuse_site_map):
     # Create a cluster expansion from the provided snapshots
@@ -31,8 +33,17 @@ def calculate_endpoint_energies(conv_cell, calc, replace_element, new_elements):
         prim = conv_cell.copy()
         prim.symbols[replace_idx] = elem
         prim.calc = calc
+
+        dyn = FIRE(UnitCellFilter(prim), logfile=None)
+        dyn.run(fmax=0.02, steps=200)
+
         E_mace = prim.get_potential_energy() / len(replace_idx)
         endpoint_energies.append(E_mace)
+
+        # lattice constants (Å) after relaxation
+        a, b, c = prim.cell.lengths()
+        print(f"{elem:2s}  a={a:6.3f} Å  b={b:6.3f} Å  c={c:6.3f} Å  iters={dyn.nsteps:3d}  E={E_mace:7.4f} eV/cation")
+
     return endpoint_energies
 
 def calculate_mace_energy(
@@ -43,6 +54,7 @@ def calculate_mace_energy(
         ) -> float:
     cation_counts = [snapshot.symbols.count(elem) for elem in cation_elements]
     snapshot.calc = calc
+    FIRE(UnitCellFilter(snapshot), logfile=None).run(fmax=0.02, steps=200)
     return snapshot.get_potential_energy() - np.dot(cation_counts, endpoint_energies_per_cation)
 
 def cluster_expansion_from_pmg_structs(
