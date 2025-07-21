@@ -12,7 +12,6 @@ class SamplerData:
     histogram:          np.ndarray
     energy_levels:      np.ndarray   # full window (same length)
     mod_factor_trace:   np.ndarray
-    enthalpy_trace: np.ndarray
     bin_size: float
     min_E:   float
     max_E:   float

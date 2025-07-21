@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 import numpy as np
 from ase.atoms import Atoms
 from mace.calculators import MACECalculator
@@ -13,20 +14,38 @@ from smol.moca import Ensemble
 from ase.optimize import FIRE
 from ase.filters import UnitCellFilter
 
-def create_canonical_ensemble(conv_cell, calc, replace_element, new_elements, ensemble_size, endpoint_energies, supercell_diag, snapshots, reuse_site_map):
+def create_canonical_ensemble(
+    conv_cell: Atoms,
+    calc: MACECalculator,
+    replace_element: str,
+    new_elements: tuple[str, ...],
+    ensemble_size: int,
+    endpoint_energies: list[float],
+    supercell_diag: tuple[int, int, int],
+    snapshots: list[Atoms],
+    *,
+    relax_lattice: bool,
+) -> Ensemble:
     # Create a cluster expansion from the provided snapshots
     pmg_structs = []
     for snapshot in snapshots:
         pmg_struct = AseAtomsAdaptor.get_structure(snapshot) # pyright: ignore[reportArgumentType]
-        pmg_struct.energy = calculate_mace_energy(calc, snapshot, new_elements, endpoint_energies)
+        pmg_struct.energy = calculate_mace_energy(calc, snapshot, new_elements, endpoint_energies, relax_lattice=relax_lattice)
         pmg_structs.append(pmg_struct)
-    ce = cluster_expansion_from_pmg_structs(conv_cell, {1: 100, 2: 10.0, 3: 8.0, 4: 6.0}, supercell_diag, pmg_structs, replace_element, new_elements, reuse_site_map)
+    ce = cluster_expansion_from_pmg_structs(conv_cell, {1: 100, 2: 10.0, 3: 8.0, 4: 6.0}, supercell_diag, pmg_structs, replace_element, new_elements)
 
     # Create a canonical ensemble
     ensemble = Ensemble.from_cluster_expansion(ce, np.diag((ensemble_size, ensemble_size, ensemble_size)))
     return ensemble
 
-def calculate_endpoint_energies(conv_cell, calc, replace_element, new_elements):
+def calculate_endpoint_energies(
+        conv_cell: Atoms,
+        calc: MACECalculator,
+        replace_element: str,
+        new_elements: tuple[str, ...],
+        *,
+        relax_lattice: bool,
+) -> list[float]:
     replace_idx = [i for i, at in enumerate(conv_cell) if at.symbol == replace_element] # type: ignore
     endpoint_energies = []
     for elem in new_elements:
@@ -34,8 +53,9 @@ def calculate_endpoint_energies(conv_cell, calc, replace_element, new_elements):
         prim.symbols[replace_idx] = elem
         prim.calc = calc
 
-        dyn = FIRE(UnitCellFilter(prim), logfile=None)
-        dyn.run(fmax=0.02, steps=200)
+        if relax_lattice:
+            dyn = FIRE(UnitCellFilter(prim), logfile=None)
+            dyn.run(fmax=0.02, steps=200)
 
         E_mace = prim.get_potential_energy() / len(replace_idx)
         endpoint_energies.append(E_mace)
@@ -49,13 +69,16 @@ def calculate_endpoint_energies(conv_cell, calc, replace_element, new_elements):
 def calculate_mace_energy(
         calc: MACECalculator,
         snapshot: Atoms,
-        cation_elements: tuple[str, str],
-        endpoint_energies_per_cation: list[float],
+        cation_elements: Iterable[str],
+        endpoint_energies_per_cation: Iterable[float],
+        *,
+        relax_lattice: bool,
         ) -> float:
     cation_counts = [snapshot.symbols.count(elem) for elem in cation_elements]
     snapshot.calc = calc
-    FIRE(UnitCellFilter(snapshot), logfile=None).run(fmax=0.02, steps=200)
-    return snapshot.get_potential_energy() - np.dot(cation_counts, endpoint_energies_per_cation)
+    if relax_lattice:
+        FIRE(UnitCellFilter(snapshot), logfile=None).run(fmax=0.02, steps=200)
+    return snapshot.get_potential_energy() - np.dot(cation_counts, np.array(endpoint_energies_per_cation))
 
 def cluster_expansion_from_pmg_structs(
         conv_cell: Atoms,
@@ -64,7 +87,6 @@ def cluster_expansion_from_pmg_structs(
         pmg_structs: list[Structure],
         replace_element: str,
         new_elements: tuple[str, ...],
-        reuse_site_map: bool,
         )-> ClusterExpansion:
     # Count how many cations are in the conv_cell
     n_cations_per_prim = sum(1 for at in conv_cell if at.symbol == replace_element) # type: ignore
@@ -87,7 +109,7 @@ def cluster_expansion_from_pmg_structs(
     site_map = None
     for ent in entries:
         wrangler.add_entry(ent, supercell_matrix=supercell_matrix, site_mapping=site_map, verbose=False)
-        if site_map is None and reuse_site_map:
+        if site_map is None:
             site_map = wrangler.entries[-1].data["site_mapping"]
 
     print(f"Matched structures: {wrangler.num_structures}/{len(entries)}")

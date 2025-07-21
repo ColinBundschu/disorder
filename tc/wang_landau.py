@@ -30,8 +30,23 @@ def Tc_from_Cv(temperatures_K: np.ndarray, Cv: np.ndarray) -> tuple[float, float
 
     # simple HWHM uncertainty
     half_max  = 0.5 * Cv[i]
-    left = np.interp(half_max, Cv[:i][::-1], temperatures_K[:i][::-1])
-    right = np.interp(half_max, Cv[i:], temperatures_K[i:])
+    j = i
+    while j >= 0:
+        if Cv[j] <= half_max:
+            left = temperatures_K[j]
+            break
+        j -= 1
+    else:
+        raise ValueError("Cv does not cross half-maximum on the low end.")
+    j = i
+    while j < len(Cv):
+        if Cv[j] <= half_max:
+            right = temperatures_K[j]
+            break
+        j += 1
+    else:
+        raise ValueError("Cv does not cross half-maximum on the high end.")
+
     dTc = 0.5 * (right - left)
     return Tc, dTc
 

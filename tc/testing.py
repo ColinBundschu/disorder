@@ -28,6 +28,7 @@ def evaluate_ensemble_vs_mace(
     endpoint_energies: list[float],
     *,
     replace_element: str,
+    relax_lattice: bool,
     new_elements: tuple[str, str],
     n_test: int = 30,
     comps: Sequence[float] = (0, 0.2, 0.5, 0.8, 1),
@@ -66,7 +67,7 @@ def evaluate_ensemble_vs_mace(
         snap.symbols[repl_idx[:n_A]] = A
 
         # -- MACE -------------------------------------------------
-        mace_E = tc.dataset.calculate_mace_energy(calc, snap, new_elements, endpoint_energies)
+        mace_E = tc.dataset.calculate_mace_energy(calc, snap, new_elements, endpoint_energies, relax_lattice=relax_lattice)
         mace_Es.append(mace_E)
 
         # -- CE via WL path --------------------------------------
