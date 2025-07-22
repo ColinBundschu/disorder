@@ -11,6 +11,8 @@ from smol.moca import Ensemble, Sampler
 from tc.sampler_data import SamplerData
 
 import plotly.graph_objects as go
+import math
+from joblib import Parallel, delayed
 
 # =====================================================================
 # Public API
@@ -482,8 +484,7 @@ def plot_hist_heatmap(
     fig, ax = plt.subplots(figsize=(7, 4))
     pcm = ax.pcolormesh(B, R, Z, shading="auto", cmap=cmap)
     fig.colorbar(pcm, ax=ax, label="# kept configs")
-    ax.set(xlabel="Bin index", ylabel="Mg fraction $x$",
-            title="# kept configurations (raw counts)")
+    ax.set(xlabel="Bin index", ylabel="Mg fraction $x$", title="# kept configurations (raw counts)")
     plt.tight_layout()
     return fig
 
@@ -537,3 +538,81 @@ def sample_configs_fast(
     ce_E = np.array(ce_E)
     # print(f"ratio: {ratio} CE energies: mean = {1000 * ce_E.mean():8.2f} meV, std = {1000 * ce_E.std():8.2f} meV, min = {1000 * ce_E.min():8.2f} meV, max = {1000 * ce_E.max():8.2f} meV")
     return ce_E
+
+
+def _single_wl(
+        ratio: float,
+        seed: int,
+        *,
+        ensemble: Ensemble,
+        num_bins: int,
+        window: tuple[float, float],
+        replace_element: str,
+        new_elements: tuple[str, str],
+        snapshot_counts: int,
+        n_samples_per_site: int,
+):
+    rng = np.random.default_rng(seed)
+    sampler = initialize_wl_sampler(ensemble, rng=rng, ratio=ratio, num_bins=num_bins, seeds=[seed], window=window)
+    occ_enc = initialize_supercell_occupancy(ensemble, rng, replace_element, new_elements, ratio)
+    nsamples = int(n_samples_per_site * ensemble.num_sites)
+    thin_by  = max(1, math.ceil(nsamples / snapshot_counts))
+    sampler.run(nsamples, occ_enc, thin_by=thin_by, progress=False)
+    return sampler
+
+def determine_wl_window(n_samples_per_site, snapshot_counts, half_window, nprocs, rng, replace_element, new_elements, ratios, E_bin_per_supercell_eV, ensemble):
+    print(f"Starting Wang-Landau window searching over {nprocs} processes…")
+    windows = []
+    for ratio in ratios:
+        random_samples = sample_configs_fast(ensemble, rng, n_samples=10_000, ratio=ratio)
+        mu = random_samples.mean()
+        windows.append((mu - half_window * E_bin_per_supercell_eV,
+                        mu + half_window * E_bin_per_supercell_eV))
+
+    seed_root  = np.random.SeedSequence(42)
+    child_seeds = [int(s) for s in seed_root.generate_state(len(ratios))]
+    samplers   = [None] * len(ratios)
+    while any(s is None for s in samplers):
+        todo_idx = [i for i, s in enumerate(samplers) if s is None]
+
+        print(f"WL level: running {len(todo_idx)} / {len(ratios)} ratios …")
+
+        # --- 1. launch only the missing jobs -------------------------
+        new_samplers = Parallel(n_jobs=nprocs, backend="loky", max_nbytes=None)(
+            delayed(_single_wl)(
+                ratios[i],
+                child_seeds[i],
+                ensemble = ensemble,
+                num_bins = half_window * 2,  # or better: derive from windows[i]
+                window = windows[i],
+                replace_element = replace_element,
+                new_elements = new_elements,
+                snapshot_counts = snapshot_counts,
+                n_samples_per_site = n_samples_per_site
+            )
+            for i in todo_idx
+        )
+
+        # --- 2. analyse and decide which ones are done ---------------
+        for local_j, i in enumerate(todo_idx):
+            sampler = new_samplers[local_j] #type: ignore
+            entropy = sampler.samples.get_trace_value("entropy")[-1] # type: ignore
+
+            first = np.argmax(entropy > 0)
+            last  = len(entropy) - np.argmax(entropy[::-1] > 0) - 1
+            active = last - first + 1
+
+            if first < 10 or last >= len(entropy) - 10:
+                raise ValueError(f"Energy window too narrow for x={ratios[i]:.3f}")
+
+            if active < 50:
+                print(f" x={ratios[i]:.3f}: only {active} active bins → shrink window.")
+                w0, w1 = windows[i]
+                width = w1 - w0
+                center = 0.5*(w0 + w1)
+                factor = 0.5
+                windows[i] = (center - 0.5*width*factor, center + 0.5*width*factor)
+            else:
+                print(f" x={ratios[i]:.3f}: {active} bins, converged.")
+                samplers[i] = sampler
+    return samplers

@@ -10,10 +10,8 @@ The final CE is then trained on the MACE energies of these Wang-Landau sampled c
 '''
 
 import argparse
-import math
 
 import numpy as np
-from joblib import Parallel, delayed
 from mace.calculators import mace_mp
 from pymatgen.io.ase import AseAtomsAdaptor
 from ase.build import bulk
@@ -22,28 +20,6 @@ from monty.serialization import dumpfn
 import tc.dataset
 import tc.testing
 import tc.wang_landau
-from smol.moca import Ensemble
-
-
-def _single_wl(
-        ratio: float,
-        seed: int,
-        *,
-        ensemble: Ensemble,
-        num_bins: int,
-        window: tuple[float, float],
-        replace_element: str,
-        new_elements: tuple[str, str],
-        snapshot_counts: int,
-        n_samples_per_site: int,
-):
-    rng = np.random.default_rng(seed)
-    sampler = tc.wang_landau.initialize_wl_sampler(ensemble, rng=rng, ratio=ratio, num_bins=num_bins, seeds=[seed], window=window)
-    occ_enc = tc.wang_landau.initialize_supercell_occupancy(ensemble, rng, replace_element, new_elements, ratio)
-    nsamples = int(n_samples_per_site * ensemble.num_sites)
-    thin_by  = max(1, math.ceil(nsamples / snapshot_counts))
-    sampler.run(nsamples, occ_enc, thin_by=thin_by, progress=False)
-    return sampler
 
 
 def main(argv=None):
@@ -83,72 +59,21 @@ def main(argv=None):
                                              new_elements=new_elements, comps=ratios, relax_lattice=args.relax_lattice)
 
     print("Initial ensemble created with", len(snapshots), "snapshots and", ensemble.num_sites, "sites per supercell.")
-    windows = []
-    for ratio in ratios:
-        random_samples = tc.wang_landau.sample_configs_fast(ensemble, rng, n_samples=10_000, ratio=ratio)
-        mu = random_samples.mean()
-        windows.append((mu - args.half_window * E_bin_per_supercell_eV,
-                        mu + args.half_window * E_bin_per_supercell_eV))
-
-    print(f"Starting Wang-Landau sampling over {args.nprocs} processes…")
-    seed_root  = np.random.SeedSequence(42)
-    child_seeds = [int(s) for s in seed_root.generate_state(len(ratios))]
-    samplers   = [None] * len(ratios)
-    while any(s is None for s in samplers):
-        todo_idx = [i for i, s in enumerate(samplers) if s is None]
-
-        print(f"WL level: running {len(todo_idx)} / {len(ratios)} ratios …")
-
-        # --- 1. launch only the missing jobs -------------------------
-        new_samplers = Parallel(n_jobs=args.nprocs, backend="loky", max_nbytes=None)(
-            delayed(_single_wl)(
-                ratios[i],                          # r
-                child_seeds[i],                     # s
-                ensemble          = ensemble,
-                num_bins          = args.half_window * 2,  # or better: derive from windows[i]
-                window            = windows[i],
-                replace_element   = replace_element,
-                new_elements      = new_elements,
-                snapshot_counts   = args.snapshot_counts,
-                n_samples_per_site= args.n_samples_per_site
-            )
-            for i in todo_idx
-        )
-
-        # --- 2. analyse and decide which ones are done ---------------
-        for local_j, i in enumerate(todo_idx):
-            sampler = new_samplers[local_j]
-            entropy = sampler.samples.get_trace_value("entropy")[-1]
-
-            first = np.argmax(entropy > 0)
-            last  = len(entropy) - np.argmax(entropy[::-1] > 0) - 1
-            active = last - first + 1
-
-            if first < 10 or last >= len(entropy) - 10:
-                raise ValueError(f"Energy window too narrow for x={ratios[i]:.3f}")
-
-            if active < 50:
-                print(f" x={ratios[i]:.3f}: only {active} active bins → shrink window.")
-                w0, w1 = windows[i]
-                width = w1 - w0
-                center = 0.5*(w0 + w1)
-                factor = 0.5
-                windows[i] = (center - 0.5*width*factor, center + 0.5*width*factor)
-            else:
-                print(f" x={ratios[i]:.3f}: {active} bins, converged.")
-                samplers[i] = sampler
+    samplers = tc.wang_landau.determine_wl_window(args.n_samples_per_site, args.snapshot_counts, args.half_window, args.nprocs,
+                                                  rng, replace_element, new_elements, ratios, E_bin_per_supercell_eV, ensemble)
 
     print("Computing final CE from Wang-Landau sampled configurations…")
-    wl_occupancies = [occ for sampler in samplers for occ in sampler.samples.get_trace_value("occupancy")]
+    wl_occupancies = [occ for sampler in samplers for occ in sampler.samples.get_trace_value("occupancy")] # type: ignore
     snapshots = [AseAtomsAdaptor.get_atoms(ensemble.processor.structure_from_occupancy(occ)) for occ in wl_occupancies]
     ensemble = tc.dataset.create_canonical_ensemble(conv_cell, calc, replace_element, new_elements, args.supercell_size,
-                                                    endpoint_energies, supercell_diag, snapshots, relax_lattice=args.relax_lattice)
+                                                    endpoint_energies, supercell_diag, snapshots, relax_lattice=args.relax_lattice) # type: ignore
 
     if args.debug:
         tc.testing.evaluate_ensemble_vs_mace(ensemble, calc, conv_cell, rng, endpoint_energies, replace_element=replace_element,
                                              new_elements=new_elements, comps=ratios, relax_lattice=args.relax_lattice)
 
-    filename = f"{''.join(new_elements)}O_ensemble{args.supercell_size}.json.gz"
+    lattice_str = f"lat-ion-relaxed" if args.relax_lattice else "lat-ion-fixed"
+    filename = f"{''.join(new_elements)}O_ensemble{args.supercell_size}_{lattice_str}.json.gz"
     dumpfn((ensemble, endpoint_energies), filename, indent=2)
     print("Done - results written to", filename)
 
