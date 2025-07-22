@@ -29,7 +29,7 @@ def main(argv=None):
     p.add_argument("--snapshot_counts",  type=int, default=100, help="number of random snapshots per ratio")
     p.add_argument("--n_samples_per_site",  type=int, default=5_000, help="number of Wang-Landau samples per site")
     p.add_argument("--half_window", type=int, default=250, help="Half the Wang-Landau energy window in bins")
-    p.add_argument("--E_bin_per_cation_eV", type=float, default=0.001, help="Energy bin width for Wang-Landau sampling (default 0.001 eV)")
+    p.add_argument("--E_bin_per_prim_eV", type=float, default=0.004, help="Energy bin width for Wang-Landau sampling (default 0.004 eV)")
     p.add_argument("--relax_lattice", action="store_true", help="relax the lattice of the supercell during MACE calculations")
     p.add_argument("--debug",  action="store_true", help="run extra MACE/ensemble sanity tests")
     args = p.parse_args(argv)
@@ -37,15 +37,12 @@ def main(argv=None):
     # Set up the initial conditions
     supercell_diag = (args.supercell_size, args.supercell_size, args.supercell_size)
     conv_cell = bulk("MgO", crystalstructure="rocksalt", a=4.27, cubic=True)
-    Mg_count = conv_cell.get_atomic_numbers().tolist().count(12)  # Mg atomic number
-    if Mg_count != 4:
-        raise ValueError(f"Expected 4 Mg atoms in the conventional cell, found {Mg_count}.")
     calc = mace_mp(model="large", device="cuda", default_dtype="float64")
     rng = np.random.default_rng(123)
     replace_element = "Mg"
     new_elements=("Mg", "Fe")
     ratios = list(np.linspace(0.1, 0.9, 17, endpoint=True))
-    E_bin_per_supercell_eV = Mg_count * np.prod(supercell_diag) * args.E_bin_per_cation_eV
+    E_bin_per_supercell_eV = np.prod(supercell_diag) * args.E_bin_per_prim_eV
 
 
     print(f"Creating initial random snapshot ensemble with supercell_size={args.supercell_size} ({args.snapshot_counts * len(ratios)} snapshots)…")
