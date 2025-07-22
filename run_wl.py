@@ -53,6 +53,7 @@ def main(argv=None):
     p.add_argument("--supercell_size", type=int, default=4, help="super-cell size")
     p.add_argument("--half_window", type=int, default=250, help="Half the Wang-Landau energy window in bins")
     p.add_argument("--E_bin_per_prim_eV", type=float, default=0.004, help="Energy bin width for Wang-Landau sampling")
+    p.add_argument("--new_elements", type=str, default="Mg,Fe", help="Comma-separated list of new elements to be added")
     p.add_argument("--snapshots_per_loop",  type=int, default=100, help="number of random snapshots per ratio")
     p.add_argument("--n_samples_per_site",  type=int, default=10_000_000, help="number of Wang-Landau samples per site")
     args = p.parse_args(argv)
@@ -61,10 +62,11 @@ def main(argv=None):
     seed_root = np.random.SeedSequence(42) # master seed
     replace_element = "Mg"
     ratios = list(np.linspace(0.1, 0.9, 33, endpoint=True))
-    new_elements=("Mg", "Fe")
+    new_elements = tuple(args.new_elements.split(","))
     filepath = os.path.join("/mnt", "z", "disorder", f"{''.join(new_elements)}O_ensemble{args.supercell_size}.json.gz")
     E_bin_per_supercell_eV = args.supercell_size ** 3 * args.E_bin_per_prim_eV
 
+    print(f"Using rock salt supercell with {args.supercell_size}x{args.supercell_size}x{args.supercell_size} supercell and new elements ({', '.join(new_elements)})…")
     print(f"Loading ensemble from {filepath}...")
     ensemble, _ = loadfn(filepath)
     print("Ensemble loaded.")

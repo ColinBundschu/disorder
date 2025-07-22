@@ -30,6 +30,7 @@ def main(argv=None):
     p.add_argument("--n_samples_per_site",  type=int, default=5_000, help="number of Wang-Landau samples per site")
     p.add_argument("--half_window", type=int, default=250, help="Half the Wang-Landau energy window in bins")
     p.add_argument("--E_bin_per_prim_eV", type=float, default=0.004, help="Energy bin width for Wang-Landau sampling (default 0.004 eV)")
+    p.add_argument("--new_elements", type=str, default="Mg,Fe", help="Comma-separated list of new elements to be added")
     p.add_argument("--relax_lattice", action="store_true", help="relax the lattice of the supercell during MACE calculations")
     p.add_argument("--debug",  action="store_true", help="run extra MACE/ensemble sanity tests")
     args = p.parse_args(argv)
@@ -40,12 +41,12 @@ def main(argv=None):
     calc = mace_mp(model="large", device="cuda", default_dtype="float64")
     rng = np.random.default_rng(123)
     replace_element = "Mg"
-    new_elements=("Mg", "Fe")
+    new_elements = tuple(args.new_elements.split(","))
     ratios = list(np.linspace(0.1, 0.9, 17, endpoint=True))
     E_bin_per_supercell_eV = np.prod(supercell_diag) * args.E_bin_per_prim_eV
 
-
-    print(f"Creating initial random snapshot ensemble with supercell_size={args.supercell_size} ({args.snapshot_counts * len(ratios)} snapshots)…")
+    print(f"Using rock salt supercell with {args.supercell_size}x{args.supercell_size}x{args.supercell_size} supercell and new elements ({', '.join(new_elements)})…")
+    print(f"Creating initial random snapshot ensemble ({args.snapshot_counts * len(ratios)} snapshots)…")
     endpoint_energies = tc.dataset.calculate_endpoint_energies(conv_cell, calc, replace_element, new_elements, relax_lattice=args.relax_lattice)
     snapshots = tc.dataset.make_random_snapshots(conv_cell, supercell_diag, rng, replace_element, new_elements, args.snapshot_counts, ratios=ratios)
     ensemble = tc.dataset.create_canonical_ensemble(conv_cell, calc, replace_element, new_elements, args.supercell_size,
