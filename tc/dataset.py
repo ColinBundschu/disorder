@@ -28,10 +28,13 @@ def create_canonical_ensemble(
 ) -> Ensemble:
     # Create a cluster expansion from the provided snapshots
     pmg_structs = []
-    for snapshot in snapshots:
+    for i, snapshot in enumerate(snapshots):
         pmg_struct = AseAtomsAdaptor.get_structure(snapshot) # pyright: ignore[reportArgumentType]
         pmg_struct.energy = calculate_mace_energy(calc, snapshot, new_elements, endpoint_energies, relax_lattice=relax_lattice)
         pmg_structs.append(pmg_struct)
+        # print every 10% of the snapshots
+        if i % (len(snapshots) // 10) == 0 or i == len(snapshots) - 1:
+            print(f"{round(i / len(snapshots) * 100)}% of snapshots processed")
     ce = cluster_expansion_from_pmg_structs(conv_cell, {1: 100, 2: 10.0, 3: 8.0, 4: 6.0}, supercell_diag, pmg_structs, replace_element, new_elements)
 
     # Create a canonical ensemble
@@ -54,15 +57,18 @@ def calculate_endpoint_energies(
         prim.calc = calc
 
         if relax_lattice:
-            dyn = FIRE(UnitCellFilter(prim), logfile=None)
+            dyn = FIRE(UnitCellFilter(prim), logfile=None) # type: ignore
             dyn.run(fmax=0.02, steps=200)
+            dyn_str= f"iters={dyn.nsteps:3d}"
+        else:
+            dyn_str = "Fixed-lattice"
 
         E_mace = prim.get_potential_energy() / len(replace_idx)
         endpoint_energies.append(E_mace)
 
         # lattice constants (Å) after relaxation
         a, b, c = prim.cell.lengths()
-        print(f"{elem:2s}  a={a:6.3f} Å  b={b:6.3f} Å  c={c:6.3f} Å  iters={dyn.nsteps:3d}  E={E_mace:7.4f} eV/cation")
+        print(f"{elem:2s}  a={a:6.3f} Å  b={b:6.3f} Å  c={c:6.3f} Å  E={E_mace:7.4f} eV/cation  {dyn_str}")
 
     return endpoint_energies
 
@@ -77,7 +83,7 @@ def calculate_mace_energy(
     cation_counts = [snapshot.symbols.count(elem) for elem in cation_elements]
     snapshot.calc = calc
     if relax_lattice:
-        FIRE(UnitCellFilter(snapshot), logfile=None).run(fmax=0.02, steps=200)
+        FIRE(UnitCellFilter(snapshot), logfile=None).run(fmax=0.02, steps=200) # type: ignore
     return snapshot.get_potential_energy() - np.dot(cation_counts, np.array(endpoint_energies_per_cation))
 
 def cluster_expansion_from_pmg_structs(
@@ -136,7 +142,7 @@ def cluster_expansion_from_pmg_structs(
     ce = ClusterExpansion(subspace, coefs)
     return ce
 
-def make_snapshots(
+def make_random_snapshots(
         conv_cell: Atoms,
         supercell_diag: tuple[int, int, int],
         rng: Generator,
@@ -173,12 +179,14 @@ def mace_E_from_occ(
     occupancy      : np.ndarray,
     calc           : MACECalculator,
     cation_elements: tuple[str, str],
-    endpoint_eVpc  : tuple[float, float],      # (E_Mg, E_Fe)  eV / cation
+    endpoint_eVpc  : list[float],      # (E_Mg, E_Fe)  eV / cation
+    *,
+    relax_lattice: bool,
 ) -> float:
     """
     Return the reference-shifted MACE energy (eV) of a configuration encoded
     by `occupancy`.
     """
     struct = ensemble.processor.structure_from_occupancy(occupancy)
-    snapshot: Atoms = AseAtomsAdaptor.get_atoms(struct)
-    return calculate_mace_energy(calc, snapshot, cation_elements, list(endpoint_eVpc))
+    snapshot: Atoms = AseAtomsAdaptor.get_atoms(struct) # type: ignore
+    return calculate_mace_energy(calc, snapshot, cation_elements, endpoint_eVpc, relax_lattice=relax_lattice)

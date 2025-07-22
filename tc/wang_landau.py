@@ -69,15 +69,11 @@ def initialize_wl_sampler(
        plotting helper.
     """
 
-    random_samples = sample_configs_fast(ensemble, rng, n_samples=10_000, ratio=ratio)
 
     # ------------------------------------------------------------
     # 1) Define the WL energy window (per primitive cell)
     # ------------------------------------------------------------
-    mu, sigma = random_samples.mean(), random_samples.std()
-    window_low, window_high = window
-    min_E = mu - window_low * sigma
-    max_E = mu + window_high * sigma
+    min_E, max_E = window
     bin_size = (max_E - min_E) / num_bins
     max_E = min_E + num_bins * bin_size - 1e-8*(max_E - min_E)/num_bins  # avoid floating-point rounding issues
     actual_num_bins = len(np.arange(min_E, max_E, bin_size))
@@ -255,7 +251,6 @@ def plot_cv_surface(
     *,
     mode: str = "surface",              # "surface" | "pcolormesh" | "scatter"
     cmap: str = "viridis",
-    engine: str = "mpl",                # "mpl" | "plotly"
     **plotly_kwargs                     # forwarded to go.Figure()
 ):
     """
@@ -281,86 +276,45 @@ def plot_cv_surface(
 
     if Cv_matrix.shape != (ratios.size, temperatures_K.size):
         raise ValueError("Cv_matrix shape must be (len(ratios), len(T)).")
-
-    # ----------------------------------------------------------------
-    # MATPLOTLIB
-    # ----------------------------------------------------------------
-    if engine == "mpl":
-        if mode == "pcolormesh":
-            fig, ax = plt.subplots(figsize=(7, 4))
-            T, X = np.meshgrid(temperatures_K, ratios)
-            pcm = ax.pcolormesh(T, X, Cv_matrix, cmap=cmap, shading="auto")
-            fig.colorbar(pcm, ax=ax, label=r"$C_v$ (eV K$^{-1}$ / supercell)")
-            ax.set(xlabel="Temperature (K)", ylabel="Mg fraction $x$",
-                   title=r"$C_v(T,x)$ – Wang-Landau")
-        elif mode == "surface":
-            fig = plt.figure(figsize=(7, 5))
-            ax  = fig.add_subplot(111, projection="3d")
-            T, X = np.meshgrid(temperatures_K, ratios)
-            ax.plot_surface(T, X, Cv_matrix, cmap=cmap,
-                            rstride=1, cstride=1, antialiased=True)
-            ax.set(xlabel="Temperature (K)", ylabel="Mg fraction $x$",
-                   zlabel=r"$C_v$ (eV K$^{-1}$ / supercell)",
-                   title=r"$C_v(T,x)$ – Wang-Landau")
-            ax.view_init(elev=25, azim=-60)
-        elif mode == "scatter":
-            fig = plt.figure(figsize=(7, 5))
-            ax  = fig.add_subplot(111, projection="3d")
-            T, X = np.meshgrid(temperatures_K, ratios)
-            sc = ax.scatter(T.ravel(), X.ravel(), Cv_matrix.ravel(),
-                            c=Cv_matrix.ravel(), cmap=cmap, s=15)
-            fig.colorbar(sc, ax=ax, label=r"$C_v$ (eV K$^{-1}$ / supercell)")
-            ax.set(xlabel="Temperature (K)", ylabel="Mg fraction $x$",
-                   zlabel=r"$C_v$ (eV K$^{-1}$ / supercell)",
-                   title=r"$C_v(T,x)$ – Wang-Landau (scatter)")
-            ax.view_init(elev=25, azim=-60)
-        else:
-            raise ValueError("mode must be 'surface', 'pcolormesh' or 'scatter'")
-        plt.tight_layout()
-        return fig  # caller can `.show()` or further tweak
-
     # ----------------------------------------------------------------
     # PLOTLY (interactive)
     # ----------------------------------------------------------------
-    if engine == "plotly":
-        # helper: convert a Matplotlib colormap → Plotly colourscale
-        def _mpl_to_plotly(cm, n=256):
-            return [[i/(n-1), f'rgb({int(r*255)},{int(g*255)},{int(b*255)})']
-                    for i, (r, g, b, _) in enumerate(cm(np.linspace(0, 1, n)))]
-        cscale = _mpl_to_plotly(plt.get_cmap(cmap))
+    # helper: convert a Matplotlib colormap → Plotly colourscale
+    def _mpl_to_plotly(cm, n=256):
+        return [[i/(n-1), f'rgb({int(r*255)},{int(g*255)},{int(b*255)})']
+                for i, (r, g, b, _) in enumerate(cm(np.linspace(0, 1, n)))]
+    cscale = _mpl_to_plotly(plt.get_cmap(cmap))
 
-        if mode == "pcolormesh":
-            T, X = np.meshgrid(temperatures_K, ratios)
-            trace = go.Heatmap(x=T, y=X, z=Cv_matrix,
-                               colorscale=cscale, colorbar_title=r"$C_v$")
-        elif mode == "surface":
-            T, X = np.meshgrid(temperatures_K, ratios)
-            trace = go.Surface(x=T, y=X, z=Cv_matrix,
-                               colorscale=cscale, colorbar_title=r"$C_v$")
-        elif mode == "scatter":
-            T, X = np.meshgrid(temperatures_K, ratios)
-            trace = go.Scatter3d(
-                x=T.ravel(), y=X.ravel(), z=Cv_matrix.ravel(),
-                mode="markers",
-                marker=dict(size=3, color=Cv_matrix.ravel(),
-                            colorscale=cscale, colorbar=dict(title=r"$C_v$"))
-            )
-        else:
-            raise ValueError("mode must be 'surface', 'pcolormesh' or 'scatter'")
-
-        fig = go.Figure(data=[trace], **plotly_kwargs)
-        fig.update_layout(
-            scene=dict(
-                xaxis_title="Temperature (K)",
-                yaxis_title="Mg fraction x",
-                zaxis_title=r"$C_v$ (eV K$^{-1}$ / supercell)",
-            ),
-            title=r"$C_v(T,x)$ – Wang-Landau",
-            margin=dict(l=0, r=0, t=40, b=0)
+    if mode == "pcolormesh":
+        T, X = np.meshgrid(temperatures_K, ratios)
+        trace = go.Heatmap(x=T, y=X, z=Cv_matrix,
+                            colorscale=cscale, colorbar_title=r"$C_v$")
+    elif mode == "surface":
+        T, X = np.meshgrid(temperatures_K, ratios)
+        trace = go.Surface(x=T, y=X, z=Cv_matrix,
+                            colorscale=cscale, colorbar_title=r"$C_v$")
+    elif mode == "scatter":
+        T, X = np.meshgrid(temperatures_K, ratios)
+        trace = go.Scatter3d(
+            x=T.ravel(), y=X.ravel(), z=Cv_matrix.ravel(),
+            mode="markers",
+            marker=dict(size=3, color=Cv_matrix.ravel(),
+                        colorscale=cscale, colorbar=dict(title=r"$C_v$"))
         )
-        return fig
+    else:
+        raise ValueError("mode must be 'surface', 'pcolormesh' or 'scatter'")
 
-    raise ValueError("engine must be 'mpl' or 'plotly'")
+    fig = go.Figure(data=[trace], **plotly_kwargs)
+    fig.update_layout(
+        scene=dict(
+            xaxis_title="Temperature (K)",
+            yaxis_title="Mg fraction x",
+            zaxis_title=r"$C_v$ (eV K$^{-1}$ / supercell)",
+        ),
+        title=r"$C_v(T,x)$ – Wang-Landau",
+        margin=dict(l=0, r=0, t=40, b=0)
+    )
+    return fig
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -391,11 +345,10 @@ def compute_dos_matrix(
 # 3)  2-D/3-D visualiser  (matplotlib OR plotly)
 # ═════════════════════════════════════════════════════════════════════════════
 def plot_dos_surface(
-    ratios          : Sequence[float],            # shape (n_ratios,)
+    ratios          : np.ndarray,            # shape (n_ratios,)
     dos_matrix      : np.ndarray,            # shape (n_ratios, nbins)
     *,
     mode            : str   = "surface",     # "surface" | "pcolormesh" | "scatter"
-    engine          : str   = "mpl",         # "mpl" | "plotly"
     cmap            : str   = "viridis",
     **plotly_kwargs                       # forwarded to go.Figure()
 ):
@@ -404,7 +357,7 @@ def plot_dos_surface(
     masked (shown transparent / skipped) so the logarithm is well-behaved.
     """
 
-    ratios     = np.asarray(ratios)
+    ratios = np.asarray(ratios)
     dos_matrix = np.asarray(dos_matrix)
     if dos_matrix.shape[0] != ratios.size:
         raise ValueError("dos_matrix rows must equal len(ratios)")
@@ -419,81 +372,46 @@ def plot_dos_surface(
     Zlog            = np.log10(dos_masked)                   # still has nans
 
     # ------------------------------------------------------------------
-    # MATPLOTLIB
-    # ------------------------------------------------------------------
-    if engine == "mpl":
-        if mode == "pcolormesh":
-            fig, ax = plt.subplots(figsize=(7, 4))
-            pcm = ax.pcolormesh(B, R, Zlog, cmap=cmap, shading="auto")
-            cb  = fig.colorbar(pcm, ax=ax, label=r"log$_{10}$ DOS")
-            ax.set(xlabel="Bin index", ylabel="Mg fraction $x$",
-                   title="Density-of-states  log₁₀DOS(idx, x)")
-            plt.tight_layout()
-            return fig
-
-        # 3-D variants
-        fig = plt.figure(figsize=(7, 5))
-        ax  = fig.add_subplot(111, projection="3d")
-
-        if mode == "surface":
-            ax.plot_surface(B, R, Zlog, cmap=cmap, rstride=1, cstride=1, antialiased=True)
-        elif mode == "scatter":
-            ax.scatter(B.ravel(), R.ravel(), Zlog.ravel(), c=Zlog.ravel(), cmap=cmap, s=10)
-        else:
-            raise ValueError("mode must be 'surface', 'pcolormesh' or 'scatter'")
-
-        ax.set(xlabel="Bin index",
-               ylabel="Mg fraction $x$",
-               zlabel=r"log$_{10}$ DOS",
-               title="Density-of-states  log₁₀DOS(idx, x)")
-        ax.view_init(elev=25, azim=-60)
-        plt.tight_layout()
-        return fig
-
-    # ------------------------------------------------------------------
     # PLOTLY (interactive)
     # ------------------------------------------------------------------
-    if engine == "plotly":
-        # helper: mpl->plotly colourscale
-        def _mpl_to_plotly(cm, n=256):
-            return [[i/(n-1),
-                     f'rgb({int(r*255)},{int(g*255)},{int(b*255)})']
-                    for i, (r,g,b,_) in enumerate(cm(np.linspace(0,1,n)))]
-        cscale = _mpl_to_plotly(plt.get_cmap(cmap))
+    # helper: mpl->plotly colourscale
+    def _mpl_to_plotly(cm, n=256):
+        return [[i/(n-1),
+                    f'rgb({int(r*255)},{int(g*255)},{int(b*255)})']
+                for i, (r,g,b,_) in enumerate(cm(np.linspace(0,1,n)))]
+    cscale = _mpl_to_plotly(plt.get_cmap(cmap))
 
-        if mode == "pcolormesh":
-            trace = go.Heatmap(
-                x=bin_indices, y=ratios, z=Zlog,
-                colorscale=cscale, colorbar_title="log₁₀ DOS"
-            )
-        elif mode == "surface":
-            trace = go.Surface(
-                x=bin_indices, y=ratios, z=Zlog,
-                colorscale=cscale, colorbar_title="log₁₀ DOS"
-            )
-        elif mode == "scatter":
-            trace = go.Scatter3d(
-                x=B.ravel(), y=R.ravel(), z=Zlog.ravel(),
-                mode="markers",
-                marker=dict(size=3, color=Zlog.ravel(),
-                            colorscale=cscale, colorbar=dict(title="log₁₀ DOS"))
-            )
-        else:
-            raise ValueError("mode must be 'surface', 'pcolormesh' or 'scatter'")
-
-        fig = go.Figure(data=[trace], **plotly_kwargs)
-        fig.update_layout(
-            scene=dict(
-                xaxis_title="Bin index",
-                yaxis_title="Mg fraction x",
-                zaxis_title="log₁₀ DOS",
-            ),
-            title="Density-of-states  log₁₀DOS(idx, x)",
-            margin=dict(l=0, r=0, t=40, b=0)
+    if mode == "pcolormesh":
+        trace = go.Heatmap(
+            x=bin_indices, y=ratios, z=Zlog,
+            colorscale=cscale, colorbar_title="log₁₀ DOS"
         )
-        return fig
+    elif mode == "surface":
+        trace = go.Surface(
+            x=bin_indices, y=ratios, z=Zlog,
+            colorscale=cscale, colorbar_title="log₁₀ DOS"
+        )
+    elif mode == "scatter":
+        trace = go.Scatter3d(
+            x=B.ravel(), y=R.ravel(), z=Zlog.ravel(),
+            mode="markers",
+            marker=dict(size=3, color=Zlog.ravel(),
+                        colorscale=cscale, colorbar=dict(title="log₁₀ DOS"))
+        )
+    else:
+        raise ValueError("mode must be 'surface', 'pcolormesh' or 'scatter'")
 
-    raise ValueError("engine must be 'mpl' or 'plotly'")
+    fig = go.Figure(data=[trace], **plotly_kwargs)
+    fig.update_layout(
+        scene=dict(
+            xaxis_title="Bin index",
+            yaxis_title="Mg fraction x",
+            zaxis_title="log₁₀ DOS",
+        ),
+        title="Density-of-states  log₁₀DOS(idx, x)",
+        margin=dict(l=0, r=0, t=40, b=0)
+    )
+    return fig
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -528,10 +446,8 @@ def compute_histogram_matrix(data_list: Sequence[SamplerData]):
 def plot_hist_heatmap(
     ratios, hist_matrix,
     *,
-    engine="mpl",              # "mpl" | "plotly"
     cmap="viridis",
     mask_zeros=True,           # set False if you want zeros coloured
-    **plotly_kwargs
 ):
     """
     Show the **raw number** of kept configurations in each WL energy bin.
@@ -563,37 +479,14 @@ def plot_hist_heatmap(
         Z = np.where(Z > 0, Z, np.nan)       # leave zeros transparent
 
     # ---------------- MATPLOTLIB ----------------
-    if engine == "mpl":
-        fig, ax = plt.subplots(figsize=(7, 4))
-        pcm = ax.pcolormesh(B, R, Z, shading="auto", cmap=cmap)
-        fig.colorbar(pcm, ax=ax, label="# kept configs")
-        ax.set(xlabel="Bin index", ylabel="Mg fraction $x$",
-               title="# kept configurations (raw counts)")
-        plt.tight_layout()
-        return fig
+    fig, ax = plt.subplots(figsize=(7, 4))
+    pcm = ax.pcolormesh(B, R, Z, shading="auto", cmap=cmap)
+    fig.colorbar(pcm, ax=ax, label="# kept configs")
+    ax.set(xlabel="Bin index", ylabel="Mg fraction $x$",
+            title="# kept configurations (raw counts)")
+    plt.tight_layout()
+    return fig
 
-    # ---------------- PLOTLY ----------------
-    if engine == "plotly":
-        def _mpl_to_plotly(cm, n=256):
-            return [[i/(n-1),
-                     f'rgb({int(r*255)},{int(g*255)},{int(b*255)})']
-                    for i,(r,g,b,_) in enumerate(cm(np.linspace(0,1,n)))]
-        cscale = _mpl_to_plotly(plt.get_cmap(cmap))
-
-        trace = go.Heatmap(
-            x=bin_idx, y=ratios, z=Z,
-            colorscale=cscale, colorbar_title="# kept configs"
-        )
-        fig = go.Figure(data=[trace], **plotly_kwargs)
-        fig.update_layout(
-            xaxis_title="Bin index",
-            yaxis_title="Mg fraction x",
-            title="# kept configurations (raw counts)",
-            margin=dict(l=0, r=0, t=40, b=0)
-        )
-        return fig
-
-    raise ValueError("engine must be 'mpl' or 'plotly'")
 
 def sample_configs_fast(
     ensemble: Ensemble,
@@ -613,7 +506,7 @@ def sample_configs_fast(
     cat_idx = np.array(
         [
             i for i, sp in enumerate(get_allowed_species(ensemble.processor.structure))
-            if len(sp) > 1                          # >1 allowed species ⇒ cation site
+            if len(sp) > 1 # type: ignore # >1 allowed species ⇒ cation site
         ],
         dtype=np.int32,
     )

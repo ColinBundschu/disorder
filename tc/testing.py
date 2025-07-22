@@ -168,8 +168,9 @@ def compare_sampler_and_mace(
     ensemble: Ensemble,
     calc: MACECalculator,
     *,
-    endpoint_eVpc: tuple[float, float],          # (E_A, E_B)  eV per cation
+    endpoint_eVpc: list[float],
     cation_elements: tuple[str, str] = ("Mg", "Fe"),
+    relax_lattice: bool,
 ) -> None:
     """
     For the first `n_compare` (thinned / discarded) samples in `sampler`,
@@ -181,7 +182,7 @@ def compare_sampler_and_mace(
 
     # Compute the number of configurations to compare
     m = len(wl_energies)
-    mace_energies = np.array([tc.dataset.mace_E_from_occ(ensemble, occus[i], calc, cation_elements, endpoint_eVpc) for i in tqdm(range(m), desc="Computing MACE energies")])
+    mace_energies = np.array([tc.dataset.mace_E_from_occ(ensemble, occus[i], calc, cation_elements, endpoint_eVpc, relax_lattice=relax_lattice) for i in tqdm(range(m), desc="Computing MACE energies")])
 
     # ---- pretty print & quick stats ---------------------------------------
     print(" idx |     MACE (eV) | WL trace (eV) |  Δ = MACE − WL (meV)")
