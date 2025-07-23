@@ -27,7 +27,7 @@ def _run_wl_to_convergence(
         snapshots_per_loop: int,  # number of random snapshots per ratio
         n_samples_per_site: int,  # number of Wang-Landau samples per site
         supercell_size: int,  # size of the supercell (e.g., 6 for 6x6x6 supercell)
-        mod_factor_threshold: float = 1e-6,  # convergence threshold for the modification factor
+        mod_factor_threshold: float = 1e-8,  # convergence threshold for the modification factor
         max_loops: int = 200,  # maximum number of loops to run
 ):
     rng = np.random.default_rng(seed)
