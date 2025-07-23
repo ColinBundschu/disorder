@@ -41,8 +41,8 @@ def main(argv=None):
     calc = mace_mp(model="large", device="cuda", default_dtype="float64")
     rng = np.random.default_rng(123)
     replace_element = "Mg"
-    new_elements = tuple(args.new_elements.split(","))
-    ratios = list(np.linspace(0.1, 0.9, 17, endpoint=True))
+    new_elements = args.new_elements.split(",")
+    ratios = np.linspace(0.1, 0.9, 17, endpoint=True)
     E_bin_per_supercell_eV = np.prod(supercell_diag) * args.E_bin_per_prim_eV
 
     print(f"Using rock salt supercell with {args.supercell_size}x{args.supercell_size}x{args.supercell_size} supercell and new elements ({', '.join(new_elements)})…")
@@ -54,7 +54,7 @@ def main(argv=None):
 
     if args.debug:
         tc.testing.evaluate_ensemble_vs_mace(ensemble, calc, conv_cell, rng, endpoint_energies, replace_element=replace_element,
-                                             new_elements=new_elements, comps=ratios, relax_lattice=args.relax_lattice)
+                                             new_elements=new_elements, ratios=ratios, relax_lattice=args.relax_lattice)
 
     print("Initial ensemble created with", len(snapshots), "snapshots and", ensemble.num_sites, "sites per supercell.")
     samplers = tc.wang_landau.determine_wl_window(args.n_samples_per_site, args.snapshot_counts, args.half_window, args.nprocs,
@@ -68,10 +68,10 @@ def main(argv=None):
 
     if args.debug:
         tc.testing.evaluate_ensemble_vs_mace(ensemble, calc, conv_cell, rng, endpoint_energies, replace_element=replace_element,
-                                             new_elements=new_elements, comps=ratios, relax_lattice=args.relax_lattice)
+                                             new_elements=new_elements, ratios=ratios, relax_lattice=args.relax_lattice)
 
     lattice_str = f"lat-ion-relaxed" if args.relax_lattice else "lat-ion-fixed"
-    filename = f"{''.join(new_elements)}O_ensemble{args.supercell_size}_{lattice_str}.json.gz"
+    filename = tc.dataset.make_ensemble_filepath(new_elements, args.supercell_size, lattice_relaxed=args.relax_lattice)
     dumpfn((ensemble, endpoint_energies), filename, indent=2)
     print("Done - results written to", filename)
 

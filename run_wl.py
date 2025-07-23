@@ -10,6 +10,7 @@ from monty.serialization import loadfn
 
 import tc.wang_landau
 import tc.sampler_data
+import tc.dataset
 
 def init_worker():
     import sys
@@ -60,6 +61,8 @@ def main(argv=None):
     p.add_argument("--new_elements", type=str, default="Mg,Fe", help="Comma-separated list of new elements to be added")
     p.add_argument("--snapshots_per_loop",  type=int, default=100, help="number of random snapshots per ratio")
     p.add_argument("--n_samples_per_site",  type=int, default=10_000_000, help="number of Wang-Landau samples per site")
+    p.add_argument("--relax_lattice", action="store_true", help="relax the lattice of the supercell during MACE calculations")
+
     args = p.parse_args(argv)
 
     # ── input parameters ────────────────────────────────────────────────
@@ -67,7 +70,7 @@ def main(argv=None):
     replace_element = "Mg"
     ratios = np.linspace(0.1, 0.9, 33, endpoint=True)
     new_elements = args.new_elements.split(",")
-    filepath = os.path.join("/mnt", "z", "disorder", f"{''.join(new_elements)}O_ensemble{args.supercell_size}_lat-ion-fixed.json.gz")
+    filepath = tc.dataset.make_ensemble_filepath(new_elements, args.supercell_size, lattice_relaxed=args.relax_lattice)
     E_bin_per_supercell_eV = args.supercell_size ** 3 * args.E_bin_per_prim_eV
 
     print(f"Using rock salt supercell with {args.supercell_size}x{args.supercell_size}x{args.supercell_size} supercell and new elements ({', '.join(new_elements)})…")

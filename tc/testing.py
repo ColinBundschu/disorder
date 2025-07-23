@@ -29,9 +29,9 @@ def evaluate_ensemble_vs_mace(
     *,
     replace_element: str,
     relax_lattice: bool,
-    new_elements: tuple[str, str],
+    new_elements: list[str],
     n_test: int = 30,
-    comps: Sequence[float] = (0, 0.2, 0.5, 0.8, 1),
+    ratios: np.ndarray = np.array([0, 0.2, 0.5, 0.8, 1]),
 ) -> ErrorStats:
     """
     Compare CE (via Ensemble.processor.compute_property) to MACE on random configs.
@@ -58,7 +58,7 @@ def evaluate_ensemble_vs_mace(
     # loop
     # ------------------------------------------------------------
     for _ in tqdm(range(n_test), desc="CE vs MACE"):
-        x   = float(rng.choice(comps))
+        x   = float(rng.choice(ratios))
         n_A = int(round(x * n_replace))
 
         snap = proto.copy()

@@ -13,12 +13,20 @@ from smol.cofe import ClusterExpansion, ClusterSubspace, StructureWrangler
 from smol.moca import Ensemble
 from ase.optimize import FIRE
 from ase.filters import UnitCellFilter
+import os
+
+def make_ensemble_filepath(new_elements: list[str], supercell_size: int, *, lattice_relaxed: bool) -> str:
+    # RSO for Rock Salt Oxide
+    relaxed_str = "LR" if lattice_relaxed else "F"
+    elem_str = '-'.join(sorted(new_elements))
+    return os.path.join("/mnt", "z", "disorder", "RSO", f"{elem_str}_{supercell_size}_{relaxed_str}.json.gz")
+
 
 def create_canonical_ensemble(
     conv_cell: Atoms,
     calc: MACECalculator,
     replace_element: str,
-    new_elements: tuple[str, ...],
+    new_elements: list[str],
     ensemble_size: int,
     endpoint_energies: list[float],
     supercell_diag: tuple[int, int, int],
@@ -92,7 +100,7 @@ def cluster_expansion_from_pmg_structs(
         supercell_diag: tuple[int, int, int],
         pmg_structs: list[Structure],
         replace_element: str,
-        new_elements: tuple[str, ...],
+        new_elements: list[str],
         )-> ClusterExpansion:
     # Count how many cations are in the conv_cell
     n_cations_per_prim = sum(1 for at in conv_cell if at.symbol == replace_element) # type: ignore
@@ -147,9 +155,9 @@ def make_random_snapshots(
         supercell_diag: tuple[int, int, int],
         rng: Generator,
         replace_element: str,
-        new_elements: tuple[str, str],
+        new_elements: list[str],
         count: int,
-        ratios: list[float],
+        ratios: np.ndarray,
         ) -> list[Atoms]:
     if len(new_elements) != 2:
         raise NotImplementedError("Only two new elements are supported for replacement.")
