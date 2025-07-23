@@ -37,7 +37,7 @@ def main(argv=None):
 
     # Set up the initial conditions
     supercell_diag = (args.supercell_size, args.supercell_size, args.supercell_size)
-    conv_cell = bulk("MgO", crystalstructure="rocksalt", a=4.27, cubic=True)
+    conv_cell = bulk("MgO", crystalstructure="rocksalt", a=4.3, cubic=True)
     calc = mace_mp(model="large", device="cuda", default_dtype="float64")
     rng = np.random.default_rng(123)
     replace_element = "Mg"
