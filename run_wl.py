@@ -11,6 +11,10 @@ from monty.serialization import loadfn
 import tc.wang_landau
 import tc.sampler_data
 
+def init_worker():
+    import sys
+    sys.stdout.reconfigure(line_buffering=True) # type: ignore
+
 
 def _run_wl_to_convergence(
         ratio: float,  # ratio of new elements in the supercell
@@ -61,9 +65,9 @@ def main(argv=None):
     # ── input parameters ────────────────────────────────────────────────
     seed_root = np.random.SeedSequence(42) # master seed
     replace_element = "Mg"
-    ratios = list(np.linspace(0.1, 0.9, 33, endpoint=True))
-    new_elements = tuple(args.new_elements.split(","))
-    filepath = os.path.join("/mnt", "z", "disorder", f"{''.join(new_elements)}O_ensemble{args.supercell_size}.json.gz")
+    ratios = np.linspace(0.1, 0.9, 33, endpoint=True)
+    new_elements = args.new_elements.split(",")
+    filepath = os.path.join("/mnt", "z", "disorder", f"{''.join(new_elements)}O_ensemble{args.supercell_size}_lat-ion-fixed.json.gz")
     E_bin_per_supercell_eV = args.supercell_size ** 3 * args.E_bin_per_prim_eV
 
     print(f"Using rock salt supercell with {args.supercell_size}x{args.supercell_size}x{args.supercell_size} supercell and new elements ({', '.join(new_elements)})…")
@@ -74,11 +78,11 @@ def main(argv=None):
     rng = np.random.default_rng(123)
     samplers = tc.wang_landau.determine_wl_window(5_000, args.snapshots_per_loop, args.half_window, args.nprocs,
                                                   rng, replace_element, new_elements, ratios, E_bin_per_supercell_eV, ensemble)
-    windows = [(sampler.mckernels[0].spec.min_enthalpy, sampler.mckernels[0].spec.max_enthalpy) for sampler in samplers]
+    windows = [(sampler.mckernels[0].spec.min_enthalpy, sampler.mckernels[0].spec.max_enthalpy) for sampler in samplers] # type: ignore
 
     child_seeds = [int(x) for x in seed_root.generate_state(len(ratios)).tolist()]
     print(f"Using {args.nprocs} workers for parallel sampling.")
-    Parallel(n_jobs=args.nprocs, backend="multiprocessing")(
+    Parallel(n_jobs=args.nprocs, backend="loky", initializer=init_worker)(
         delayed(_run_wl_to_convergence)(ratio, seed, ensemble, 2*args.half_window, window, replace_element,
                                         new_elements, args.snapshots_per_loop, args.n_samples_per_site, args.supercell_size,
                                         ) for ratio, seed, window in zip(ratios, child_seeds, windows)

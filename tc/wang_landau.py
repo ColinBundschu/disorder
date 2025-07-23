@@ -560,7 +560,20 @@ def _single_wl(
     sampler.run(nsamples, occ_enc, thin_by=thin_by, progress=False)
     return sampler
 
-def determine_wl_window(n_samples_per_site, snapshot_counts, half_window, nprocs, rng, replace_element, new_elements, ratios, E_bin_per_supercell_eV, ensemble):
+def determine_wl_window(
+        n_samples_per_site: int,
+        snapshot_counts: int,
+        half_window: int,
+        nprocs: int,
+        rng: np.random.Generator,
+        replace_element: str,
+        new_elements: list[str],
+        ratios: np.ndarray,
+        E_bin_per_supercell_eV: float,
+        ensemble: Ensemble,
+        *,
+        minimum_bins: int = 100,  # minimum number of active bins to consider a window converged
+):
     print(f"Starting Wang-Landau window searching over {nprocs} processes…")
     windows = []
     for ratio in ratios:
@@ -605,7 +618,7 @@ def determine_wl_window(n_samples_per_site, snapshot_counts, half_window, nprocs
             if first < 10 or last >= len(entropy) - 10:
                 raise ValueError(f"Energy window too narrow for x={ratios[i]:.3f}")
 
-            if active < 50:
+            if active < minimum_bins:
                 print(f" x={ratios[i]:.3f}: only {active} active bins → shrink window.")
                 w0, w1 = windows[i]
                 width = w1 - w0
