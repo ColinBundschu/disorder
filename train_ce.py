@@ -20,6 +20,7 @@ from monty.serialization import dumpfn
 import tc.dataset
 import tc.testing
 import tc.wang_landau
+import pathlib
 
 
 def main(argv=None):
@@ -70,10 +71,10 @@ def main(argv=None):
         tc.testing.evaluate_ensemble_vs_mace(ensemble, calc, conv_cell, rng, endpoint_energies, replace_element=replace_element,
                                              new_elements=new_elements, ratios=ratios, relax_lattice=args.relax_lattice)
 
-    lattice_str = f"lat-ion-relaxed" if args.relax_lattice else "lat-ion-fixed"
-    filename = tc.dataset.make_ensemble_filepath(new_elements, args.supercell_size, lattice_relaxed=args.relax_lattice)
-    dumpfn((ensemble, endpoint_energies), filename, indent=2)
-    print("Done - results written to", filename)
+    filepath = tc.dataset.make_ensemble_filepath(new_elements, args.supercell_size, lattice_relaxed=args.relax_lattice)
+    pathlib.Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+    dumpfn((ensemble, endpoint_energies), filepath, indent=2)
+    print("Done - results written to", filepath)
 
 
 if __name__ == "__main__":

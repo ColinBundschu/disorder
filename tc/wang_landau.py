@@ -9,14 +9,23 @@ from smol.cofe import ClusterSubspace
 from smol.cofe.space.domain import get_allowed_species
 from smol.moca import Ensemble, Sampler
 from tc.sampler_data import SamplerData
+import tc.dataset
 
 import plotly.graph_objects as go
 import math
 from joblib import Parallel, delayed
+import os
 
 # =====================================================================
 # Public API
 # =====================================================================
+
+def make_sampler_filepath(ratio: float, new_elements: list[str], supercell_size: int, *, lattice_relaxed: bool) -> str:
+    ratio_for_str = round(1000* ratio)
+    if ratio_for_str / 1000 != ratio:
+        raise ValueError(f"Ratio {ratio} is not a multiple of 0.001; cannot convert to filename.")
+    return os.path.join(tc.dataset.run_folderpath(new_elements, supercell_size, lattice_relaxed=lattice_relaxed), f"{ratio_for_str}.npz")
+
 
 def Tc_from_Cv(temperatures_K: np.ndarray, Cv: np.ndarray) -> tuple[float, float]:
     i = int(np.argmax(Cv))
@@ -179,7 +188,7 @@ def initialize_supercell_occupancy(
     ensemble: Ensemble,
     rng: Generator,
     replace_element: str,
-    new_elements: tuple[str, str],
+    new_elements: list[str],
     ratio: float,
 ) -> np.ndarray:
     """Encode the initial random snapshot at the requested composition."""
@@ -548,7 +557,7 @@ def _single_wl(
         num_bins: int,
         window: tuple[float, float],
         replace_element: str,
-        new_elements: tuple[str, str],
+        new_elements: list[str],
         snapshot_counts: int,
         n_samples_per_site: int,
 ):

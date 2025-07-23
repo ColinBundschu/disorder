@@ -15,11 +15,14 @@ from ase.optimize import FIRE
 from ase.filters import UnitCellFilter
 import os
 
-def make_ensemble_filepath(new_elements: list[str], supercell_size: int, *, lattice_relaxed: bool) -> str:
-    # RSO for Rock Salt Oxide
+def run_folderpath(new_elements: list[str], supercell_size: int, *, lattice_relaxed: bool):
     relaxed_str = "LR" if lattice_relaxed else "F"
     elem_str = '-'.join(sorted(new_elements))
-    return os.path.join("/mnt", "z", "disorder", "RSO", f"{elem_str}_{supercell_size}_{relaxed_str}.json.gz")
+    # RSO for Rock Salt Oxide
+    return os.path.join("/mnt", "z", "disorder", "RSO", f"{elem_str}_{supercell_size}_{relaxed_str}")
+
+def make_ensemble_filepath(new_elements: list[str], supercell_size: int, *, lattice_relaxed: bool) -> str:
+    return os.path.join(run_folderpath(new_elements, supercell_size, lattice_relaxed=lattice_relaxed), "ensemble.json.gz")
 
 
 def create_canonical_ensemble(
