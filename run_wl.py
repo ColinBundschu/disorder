@@ -1,8 +1,5 @@
 #!/usr/bin/env python
 
-import warnings
-warnings.filterwarnings("ignore", message=r"Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*", category=UserWarning, module=r"e3nn\.o3\._wigner")
-
 import argparse
 import math
 import pathlib
@@ -17,6 +14,8 @@ import tc.dataset
 def init_worker():
     import sys
     sys.stdout.reconfigure(line_buffering=True) # type: ignore
+    import warnings
+    warnings.filterwarnings("ignore", message=r"Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*", category=UserWarning, module=r"e3nn\.o3\._wigner")
 
 
 def _run_wl_to_convergence(

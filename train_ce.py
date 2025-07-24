@@ -9,9 +9,6 @@ to generate a set of configurations that roughly uniformly cover the full energy
 The final CE is then trained on the MACE energies of these Wang-Landau sampled configurations.
 '''
 
-import warnings
-warnings.filterwarnings("ignore", message=r"Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*", category=UserWarning, module=r"e3nn\.o3\._wigner")
-
 import argparse
 
 import numpy as np
