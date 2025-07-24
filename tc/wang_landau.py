@@ -448,7 +448,8 @@ def compute_histogram_matrix(data_list: Sequence[SamplerData]):
     for data in data_list:
         if data.nbins != nbins:
             raise ValueError("All samplers must share the same bin grid.")
-        rows.append(-np.log10(data.mod_factor_trace[-1]) * (data.histogram > 0))
+        # Add 1e-6 so that log10(1) is not 0, which doesn't show up in the plot.
+        rows.append((1e-6 - np.log10(data.mod_factor_trace[-1])) * (data.histogram > 0))
     return np.vstack(rows) # (n_ratios, nbins)
 
 
