@@ -438,7 +438,8 @@ def compute_histogram_per_bin(data: SamplerData) -> np.ndarray:
 
 
 def compute_histogram_matrix(data_list: Sequence[SamplerData]):
-    """Stack per-bin counts → shape (n_ratios, nbins)."""
+    """Area is the non-zero entropy counts, value is the convergence exponent.
+    shape (n_ratios, nbins)."""
     if len(data_list) == 0:
         raise ValueError("Need at least one sampler.")
     nbins = data_list[0].nbins
@@ -447,7 +448,7 @@ def compute_histogram_matrix(data_list: Sequence[SamplerData]):
     for data in data_list:
         if data.nbins != nbins:
             raise ValueError("All samplers must share the same bin grid.")
-        rows.append(data.histogram)
+        rows.append(-np.log10(data.mod_factor_trace[-1]) * (data.histogram > 0))
     return np.vstack(rows) # (n_ratios, nbins)
 
 
@@ -492,8 +493,8 @@ def plot_hist_heatmap(
     # ---------------- MATPLOTLIB ----------------
     fig, ax = plt.subplots(figsize=(7, 4))
     pcm = ax.pcolormesh(B, R, Z, shading="auto", cmap=cmap)
-    fig.colorbar(pcm, ax=ax, label="# kept configs")
-    ax.set(xlabel="Bin index", ylabel="Mg fraction $x$", title="# kept configurations (raw counts)")
+    fig.colorbar(pcm, ax=ax, label="-log10(mod-factor)")
+    ax.set(xlabel="Bin index", ylabel="Mg fraction $x$", title="Convergence histogram")
     plt.tight_layout()
     return fig
 
