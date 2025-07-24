@@ -21,8 +21,8 @@ import os
 # =====================================================================
 
 def make_sampler_filepath(ratio: float, new_elements: list[str], supercell_size: int, *, lattice_relaxed: bool) -> str:
-    ratio_for_str = round(1000* ratio)
-    if ratio_for_str / 1000 != ratio:
+    ratio_for_str = round(1000 * ratio)
+    if abs(ratio_for_str / 1000 - ratio) > 1e-6:
         raise ValueError(f"Ratio {ratio} is not a multiple of 0.001; cannot convert to filename.")
     return os.path.join(tc.dataset.run_folderpath(new_elements, supercell_size, lattice_relaxed=lattice_relaxed), f"{ratio_for_str}.npz")
 
