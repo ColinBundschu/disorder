@@ -634,7 +634,7 @@ def determine_wl_window(
                 w0, w1 = windows[i]
                 width = w1 - w0
                 center = 0.5*(w0 + w1)
-                factor = 0.5
+                factor = 0.7
                 windows[i] = (center - 0.5*width*factor, center + 0.5*width*factor)
             else:
                 print(f" x={ratios[i]:.3f}: {active} bins, converged.")
