@@ -523,18 +523,18 @@ def sample_configs_fast(
         dtype=np.int32,
     )
     n_cations = cat_idx.size
-    n_A = round(n_cations * ratio)
-    n_B = n_cations - n_A
+    n_B = round(n_cations * ratio)
+    n_A = n_cations - n_B
     n_sites   = ensemble.num_sites
 
     # print(f"Sampling {n_samples} configurations with {n_A} Li and {n_B} Mn...")
     ce_E = []
     for _ in range(n_samples):
-        occ = np.ones(n_sites, dtype=np.int32)
-        li_sites = rng.choice(cat_idx, round(n_cations * ratio), replace=False)
-        occ[li_sites] = 0
+        occ = np.zeros(n_sites, dtype=np.int32)
+        B_sites = rng.choice(cat_idx, round(n_cations * ratio), replace=False)
+        occ[B_sites] = 1
 
-        # ---- sanity checks ---------------------------------------
+        # ---- sanity checks --------------------------------------
         n_A_actual = (occ[cat_idx] == 0).sum()
         n_B_actual = (occ[cat_idx] == 1).sum()
         if (n_A != n_A_actual) or (n_B != n_B_actual):
@@ -622,13 +622,13 @@ def determine_wl_window(
         # --- 2. analyse and decide which ones are done ---------------
         for local_j, i in enumerate(todo_idx):
             sampler = new_samplers[local_j] #type: ignore
-            entropy = sampler.samples.get_trace_value("entropy")[-1] # type: ignore
+            histogram = sampler.samples.get_trace_value("histogram")[-1] # type: ignore
 
-            first = np.argmax(entropy > 0)
-            last  = len(entropy) - np.argmax(entropy[::-1] > 0) - 1
+            first = np.argmax(histogram > 0)
+            last  = len(histogram) - np.argmax(histogram[::-1] > 0) - 1
             active = last - first + 1
 
-            if first < 10 or last >= len(entropy) - 10:
+            if first < 10 or last >= len(histogram) - 10:
                 raise ValueError(f" x={ratios[i]:.3f}: [{first},{last}] Energy window too narrow")
 
             if active < minimum_bins:
