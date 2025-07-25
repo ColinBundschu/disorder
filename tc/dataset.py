@@ -46,7 +46,9 @@ def create_canonical_ensemble(
         # print every 10% of the snapshots
         if i % (len(snapshots) // 10) == 0 or i == len(snapshots) - 1:
             print(f"{round(i / len(snapshots) * 100)}% of snapshots processed")
-    ce = cluster_expansion_from_pmg_structs(conv_cell, {1: 100, 2: 10.0, 3: 8.0, 4: 6.0}, supercell_diag, pmg_structs, replace_element, new_elements)
+    orbit_cutoffs = {1: 100, 2: 10.0, 3: 8.0, 4: 6.0}
+    print(f"Creating cluster expansion with cutoffs {orbit_cutoffs}")
+    ce = cluster_expansion_from_pmg_structs(conv_cell, orbit_cutoffs, supercell_diag, pmg_structs, replace_element, new_elements)
 
     # Create a canonical ensemble
     ensemble = Ensemble.from_cluster_expansion(ce, np.diag((ensemble_size, ensemble_size, ensemble_size)))
