@@ -30,6 +30,7 @@ def _run_wl_to_convergence(
         n_samples_per_site: int,  # number of Wang-Landau samples per site
         supercell_size: int,  # size of the supercell (e.g., 6 for 6x6x6 supercell)
         *,
+        lattice_relaxed: bool,  # whether the lattice of the supercell is relaxed during MACE calculations
         mod_factor_threshold: float = 1e-8,  # convergence threshold for the modification factor
         max_loops: int = 200,  # maximum number of loops to run
 ):
@@ -45,7 +46,7 @@ def _run_wl_to_convergence(
     while mod_factor > mod_factor_threshold and loop_count < max_loops:
         print(f"[p={ratio:5.3f}]  loop {loop_count}  ln f={mod_factor:8.2e}")
         sampler.run(nsamples_per_loop, occ_enc, thin_by=thin_by, progress=False)
-        filepath = tc.wang_landau.make_sampler_filepath(ratio, new_elements, supercell_size, lattice_relaxed=False)
+        filepath = tc.wang_landau.make_sampler_filepath(ratio, new_elements, supercell_size, lattice_relaxed=lattice_relaxed)
         pathlib.Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         data = tc.sampler_data.dump_sampler_data(sampler, filepath)
         mod_factor = data.mod_factor_trace[-1]
@@ -90,7 +91,7 @@ def main(argv=None):
     print(f"Using {args.nprocs} workers for parallel sampling.")
     Parallel(n_jobs=args.nprocs, backend="loky", initializer=init_worker)(
         delayed(_run_wl_to_convergence)(ratio, seed, ensemble, 2*args.half_window, window, replace_element,
-                                        new_elements, args.snapshots_per_loop, args.n_samples_per_site, args.supercell_size,
+                                        new_elements, args.snapshots_per_loop, args.n_samples_per_site, args.supercell_size, lattice_relaxed=args.relax_lattice,
                                         ) for ratio, seed, window in zip(ratios, child_seeds, windows)
     )
 
