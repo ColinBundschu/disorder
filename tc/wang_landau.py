@@ -587,11 +587,13 @@ def determine_wl_window(
 ):
     print(f"Starting Wang-Landau window searching over {nprocs} processes…")
     windows = []
+    mus = []
     for ratio in ratios:
         random_samples = sample_configs_fast(ensemble, rng, n_samples=10_000, ratio=ratio)
         mu = random_samples.mean()
         windows.append((mu - half_window * E_bin_per_supercell_eV,
                         mu + half_window * E_bin_per_supercell_eV))
+        mus.append(mu)
 
     seed_root  = np.random.SeedSequence(42)
     child_seeds = [int(s) for s in seed_root.generate_state(len(ratios))]
@@ -627,16 +629,14 @@ def determine_wl_window(
             active = last - first + 1
 
             if first < 10 or last >= len(entropy) - 10:
-                raise ValueError(f"Energy window too narrow for x={ratios[i]:.3f}")
+                raise ValueError(f" x={ratios[i]:.3f}: [{first},{last}] Energy window too narrow")
 
             if active < minimum_bins:
-                print(f" x={ratios[i]:.3f}: only {active} active bins → shrink window.")
-                w0, w1 = windows[i]
-                width = w1 - w0
-                center = 0.5*(w0 + w1)
+                print(f" x={ratios[i]:.3f}: [{first},{last}] only {active} active bins → shrink window.")
+                half_width = 0.5 * (windows[i][1] - windows[i][0])
                 factor = 0.7
-                windows[i] = (center - 0.5*width*factor, center + 0.5*width*factor)
+                windows[i] = (mus[i] - half_width*factor, mus[i] + half_width*factor)
             else:
-                print(f" x={ratios[i]:.3f}: {active} bins, converged.")
+                print(f" x={ratios[i]:.3f}: [{first},{last}] {active} bins, converged.")
                 samplers[i] = sampler
     return samplers
