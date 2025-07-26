@@ -20,11 +20,15 @@ import os
 # Public API
 # =====================================================================
 
-def make_sampler_filepath(ratio: float, new_elements: list[str], supercell_size: int, *, lattice_relaxed: bool) -> str:
-    ratio_for_str = round(1000 * ratio)
-    if abs(ratio_for_str / 1000 - ratio) > 1e-6:
-        raise ValueError(f"Ratio {ratio} is not a multiple of 0.001; cannot convert to filename.")
-    return os.path.join(tc.dataset.run_folderpath(new_elements, supercell_size, lattice_relaxed=lattice_relaxed), f"{ratio_for_str}.npz")
+def make_sampler_filepath(composition: dict[str, float], supercell_size: int, *, lattice_relaxed: bool) -> str:
+    comp_str_list = []
+    for el, ratio in composition.items():
+        ratio_for_str = round(1000 * ratio)
+        if abs(ratio_for_str / 1000 - ratio) > 1e-6:
+            raise ValueError(f"Ratio {ratio} is not a multiple of 0.001; cannot convert to filename.")
+        comp_str_list.append(f"{el}{ratio_for_str}")
+    comp_str = "-".join(comp_str_list)
+    return os.path.join(tc.dataset.run_folderpath(list(composition.keys()), supercell_size, lattice_relaxed=lattice_relaxed), f"{comp_str}.npz")
 
 
 def Tc_from_Cv(temperatures_K: np.ndarray, Cv: np.ndarray) -> tuple[float, float]:
@@ -64,11 +68,9 @@ def Tc_from_Cv(temperatures_K: np.ndarray, Cv: np.ndarray) -> tuple[float, float
 def initialize_wl_sampler(
     ensemble: Ensemble,
     *,
-    rng: Generator,
-    ratio: float,
     num_bins: int,
     flatness: float = 0.8,
-    seeds: Sequence[int],
+    seeds: list[int],
     window: tuple[float, float],
 ) -> Sampler:
     """Run a Wang-Landau sampler and show a three-panel diagnostic figure.
@@ -184,38 +186,66 @@ def generate_wl_plots(
 
     plt.show()
 
+# ---------------------------------------------------------------
 def initialize_supercell_occupancy(
-    ensemble: Ensemble,
-    rng: Generator,
-    replace_element: str,
-    new_elements: list[str],
-    ratio: float,
+    ensemble      : Ensemble,
+    rng           : Generator,
+    composition   : dict[str, float],           # e.g. {"Co":0.25, "Mn":0.75}
 ) -> np.ndarray:
-    """Encode the initial random snapshot at the requested composition."""
+    """
+    Build a random supercell consistent with `composition` on the cation
+    sub-lattice, then return the integer occupancy encoding expected by SMOL.
 
-    n_sc = round(ensemble.processor.size ** (1 / 3))
-    if n_sc ** 3 != ensemble.processor.size:
+    Notes
+    -----
+    * Fractions must sum to 1 (±1 e-6).  
+    * Elements in `composition` must all replace `replace_element`.
+    """
+    # ── 0 · sanity ------------------------------------------------------
+    if not math.isclose(sum(composition.values()), 1.0, abs_tol=1e-6):
+        raise ValueError("Fractions in `composition` must sum to 1.")
+
+    elem2idx = get_cation_index_map(ensemble)
+    unknown  = set(composition) - set(elem2idx)
+    if unknown:
+        raise KeyError(f"Elements {unknown} not present in the ensemble site-space")
+
+    # ── 1 · make an MgO prototype of identical size --------------------
+    n_sc = round(ensemble.processor.size ** (1/3))
+    if n_sc**3 != ensemble.processor.size:
         raise ValueError("Ensemble supercell is not cubic.")
-
     sc_tuple = (n_sc, n_sc, n_sc)
-    sc_mat = np.diag(sc_tuple)
+    snapshot = bulk("MgO", crystalstructure="rocksalt", a=4.3, cubic=True) * sc_tuple
 
-    conv_cell = bulk("MgO", crystalstructure="rocksalt", a=4.2, cubic=True)
-    snapshot = conv_cell * sc_tuple
-
-    # Populate the cation sub-lattice
-    repl_idx = [i for i, at in enumerate(snapshot) if at.symbol == replace_element]
+    # indices of the cation sites to be replaced
+    repl_idx = [i for i, at in enumerate(snapshot) if at.symbol == "Mg"]
     rng.shuffle(repl_idx)
-    n_A = int(round(ratio * len(repl_idx)))
-    A, B = new_elements
-    snapshot.symbols[repl_idx] = B
-    snapshot.symbols[repl_idx[:n_A]] = A
 
-    subspace: ClusterSubspace = ensemble.processor.cluster_subspace
+    # ── 2 · translate fractions → exact integer counts -----------------
+    n_cations      = len(repl_idx)
+    target_counts  = {el: round(frac * n_cations) for el, frac in composition.items()}
+
+    # fix rounding drift so total matches exactly
+    delta = n_cations - sum(target_counts.values())
+    if delta:
+        for el in list(target_counts)[:abs(delta)]:
+            target_counts[el] += int(math.copysign(1, delta))
+
+    # sanity
+    assert sum(target_counts.values()) == n_cations
+
+    # ── 3 · assign elements to sites -----------------------------------
+    start = 0
+    for el, n_el in target_counts.items():
+        end = start + n_el
+        snapshot.symbols[repl_idx[start:end]] = el
+        start = end
+
+    # ── 4 · encode to SMOL occupancy -----------------------------------
+    sc_mat = np.diag(sc_tuple)
     pmg_struct = AseAtomsAdaptor.get_structure(snapshot)
-    occ_enc = subspace.occupancy_from_structure(pmg_struct, scmatrix=sc_mat, encode=True)
-
-    return occ_enc.astype(np.int32) # type: ignore
+    occ_enc = ensemble.processor.cluster_subspace.occupancy_from_structure(pmg_struct, scmatrix=sc_mat, encode=True)
+    return occ_enc.astype(np.int32)
 
 
 def compute_thermodynamics(
@@ -322,14 +352,14 @@ def plot_cv_surface(
             yaxis_title="Mg fraction x",
             zaxis_title=r"$C_v$ (eV K$^{-1}$ / supercell)",
         ),
-        title=r"$C_v(T,x)$ – Wang-Landau",
+        title=r"$C_v(T,x)$ - Wang-Landau",
         margin=dict(l=0, r=0, t=40, b=0)
     )
     return fig
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 2)  Convenience – crunch a *list* of samplers in one go
+# 2)  Convenience - crunch a *list* of samplers in one go
 # ═════════════════════════════════════════════════════════════════════════════
 def compute_dos_matrix(
     data_list: Sequence[SamplerData],  # one WL sampler per composition
@@ -499,144 +529,180 @@ def plot_hist_heatmap(
     plt.tight_layout()
     return fig
 
+def get_cation_index_map(ensemble) -> dict[str, int]:
+    """
+    Return {element_symbol: integer_index} in the *same order* that SMOL
+    uses to encode the occupancy vector, but without relying on the
+    newer `ClusterSubspace.site_spaces` attribute.
+    """
+    struct = ensemble.processor.structure
+
+    # `get_allowed_species(struct)` returns a tuple for every crystallographic
+    # site.  The first tuple with >1 entries is our cation sub‑lattice.
+    for species_tuple in get_allowed_species(struct):
+        if len(species_tuple) > 1:
+            return {str(sp): idx for idx, sp in enumerate(species_tuple)}
+
+    raise RuntimeError("No multicomponent site-space found in this ensemble.")
 
 def sample_configs_fast(
-    ensemble: Ensemble,
-    rng: Generator,
-    ratio: float,
+    ensemble      : Ensemble,
+    rng           : Generator,
+    composition   : dict[str, float], # e.g. {"Co":0.3, "Mn":0.5, "Fe":0.2}
     *,
-    n_samples: int = 100,
+    n_samples : int = 100,
 ) -> np.ndarray:
     """
-    Compare CE (via Ensemble.processor.compute_property) to MACE on random configs.
-    Follows the 'WL sanity check' recipe exactly.
+    Draw random occupancies matching the requested composition and return the
+    corresponding CE energies.  Works for any number of species on the cation
+    sub-lattice.
     """
+    elem2idx = get_cation_index_map(ensemble)
 
-    N_sc = round(ensemble.processor.size ** (1/3))
-    if N_sc**3 != ensemble.processor.size:
-        raise ValueError(f"Supercell size {ensemble.processor.size} is not a perfect cube.")
+    # ----- basic sanity --------------------------------------------------
+    if not math.isclose(sum(composition.values()), 1.0, abs_tol=1e-6):
+        raise ValueError("Fractions must sum to 1.")
+    if set(composition) - set(elem2idx):
+        raise KeyError("Composition contains elements not present in the site-space.")
+
+    # ----- figure out how many sites of each element we need -------------
     cat_idx = np.array(
-        [
-            i for i, sp in enumerate(get_allowed_species(ensemble.processor.structure))
-            if len(sp) > 1 # type: ignore # >1 allowed species ⇒ cation site
-        ],
-        dtype=np.int32,
+        [i for i, sp in enumerate(get_allowed_species(ensemble.processor.structure)) if len(sp) > 1], dtype=np.int32,
     )
-    n_cations = cat_idx.size
-    n_B = round(n_cations * ratio)
-    n_A = n_cations - n_B
-    n_sites   = ensemble.num_sites
+    n_cations     = cat_idx.size
+    target_counts = {el: round(frac * n_cations) for el, frac in composition.items()}
 
-    # print(f"Sampling {n_samples} configurations with {n_A} Li and {n_B} Mn...")
+    # correct rounding so the total matches exactly
+    delta = n_cations - sum(target_counts.values())
+    if delta:                                   # distribute leftovers
+        # give the last |delta| elements +1 (or −1) until the sum is right
+        for el in list(target_counts)[:abs(delta)]:
+            target_counts[el] += int(math.copysign(1, delta))
+
+    if sum(target_counts.values()) != n_cations:
+        raise RuntimeError("Target counts do not match the number of cation sites.")
+
+    # ----- sampling loop -------------------------------------------------
+    n_sites = ensemble.num_sites
     ce_E = []
+
     for _ in range(n_samples):
-        occ = np.zeros(n_sites, dtype=np.int32)
-        B_sites = rng.choice(cat_idx, round(n_cations * ratio), replace=False)
-        occ[B_sites] = 1
+        occ = np.full(n_sites, -1, dtype=np.int32)   # -1 = untouched
+        free_idx = cat_idx.copy()
 
-        # ---- sanity checks --------------------------------------
-        n_A_actual = (occ[cat_idx] == 0).sum()
-        n_B_actual = (occ[cat_idx] == 1).sum()
-        if (n_A != n_A_actual) or (n_B != n_B_actual):
-            raise ValueError(f"Expected {n_A} Li and {n_B} Mn, but got {n_A_actual} Li and {n_B_actual} Mn.")
+        # place each element in turn
+        for el, n_el in target_counts.items():
+            chosen = rng.choice(free_idx, n_el, replace=False)
+            occ[chosen] = elem2idx[el]
+            free_idx = free_idx[~np.in1d(free_idx, chosen)]
 
-        # ---- CE energy ------------------------------------------
-        corr  = ensemble.compute_feature_vector(occ)              # raw counts
-        E_sup = float(ensemble.natural_parameters @ corr)         # eV / cell
+        # defensive check
+        if (occ[cat_idx] < 0).any():
+            raise RuntimeError("Not all cation sites were assigned.")
+
+        # --- CE energy
+        corr = ensemble.compute_feature_vector(occ)
+        E_sup = float(ensemble.natural_parameters @ corr)
         ce_E.append(E_sup)
 
-    # print the mean, std dev, min, and max of the CE energies
-    ce_E = np.array(ce_E)
-    # print(f"ratio: {ratio} CE energies: mean = {1000 * ce_E.mean():8.2f} meV, std = {1000 * ce_E.std():8.2f} meV, min = {1000 * ce_E.min():8.2f} meV, max = {1000 * ce_E.max():8.2f} meV")
-    return ce_E
+    return np.asarray(ce_E)
 
 
-def _single_wl(
-        ratio: float,
-        seed: int,
-        *,
-        ensemble: Ensemble,
-        num_bins: int,
-        window: tuple[float, float],
-        replace_element: str,
-        new_elements: list[str],
-        snapshot_counts: int,
-        n_samples_per_site: int,
-):
-    rng = np.random.default_rng(seed)
-    sampler = initialize_wl_sampler(ensemble, rng=rng, ratio=ratio, num_bins=num_bins, seeds=[seed], window=window)
-    occ_enc = initialize_supercell_occupancy(ensemble, rng, replace_element, new_elements, ratio)
-    nsamples = int(n_samples_per_site * ensemble.num_sites)
-    thin_by  = max(1, math.ceil(nsamples / snapshot_counts))
-    sampler.run(nsamples, occ_enc, thin_by=thin_by, progress=False)
-    return sampler
+def init_worker():
+    import sys
+    sys.stdout.reconfigure(line_buffering=True) # type: ignore
+    import warnings
+    warnings.filterwarnings("ignore", message=r"Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*", category=UserWarning, module=r"e3nn\.o3\._wigner")
 
 def determine_wl_window(
-        n_samples_per_site: int,
-        snapshot_counts: int,
-        half_window: int,
-        nprocs: int,
-        rng: np.random.Generator,
-        replace_element: str,
-        new_elements: list[str],
-        ratios: np.ndarray,
-        E_bin_per_supercell_eV: float,
-        ensemble: Ensemble,
-        *,
-        minimum_bins: int = 100,  # minimum number of active bins to consider a window converged
+    *,
+    composition: dict[str, float], # e.g. {"Co":0.3, "Mn":0.5, "Fe":0.2}
+    n_samples_per_site: int,
+    snapshot_counts: int,
+    half_window: int,
+    seed: int,
+    rng: Generator,
+    E_bin_per_supercell_eV: float,
+    ensemble: Ensemble,
+    minimum_bins: int = 100,
+) -> Sampler:
+    """
+    Find an energy window that contains at least `minimum_bins` visited
+    WL bins and is safely away from the edges.  Returns the converged
+    Wang-Landau `Sampler`.
+    """
+    # ── initial mu and symmetric window ────────────────────────────────
+    rand_E = sample_configs_fast(ensemble, rng, composition=composition, n_samples=10_000)
+    mu = float(rand_E.mean())
+    half_W_eV = half_window * E_bin_per_supercell_eV
+    window = (mu - half_W_eV, mu + half_W_eV)
+
+    local_rng = np.random.default_rng(seed)
+
+    # ── adaptive shrink-until-converged loop ──────────────────────────
+    while True:
+        # ----- (a) initialise and run one WL pass ---------------------
+        sampler = initialize_wl_sampler(ensemble, num_bins=2*half_window, seeds=[int(local_rng.integers(1<<32))], window=window)
+        occ_enc = initialize_supercell_occupancy(ensemble, local_rng, composition)
+        nsamples = int(n_samples_per_site * ensemble.num_sites)
+        thin_by = max(1, math.ceil(nsamples / snapshot_counts))
+        sampler.run(nsamples, occ_enc, thin_by=thin_by, progress=False)
+
+        # ----- (b) coverage analysis ---------------------------------
+        hist = sampler.samples.get_trace_value("histogram")[-1]
+        mask = hist > 0
+        first = np.argmax(mask)
+        last = len(mask) - np.argmax(mask[::-1]) - 1
+        active = last - first + 1
+
+        if first < 10 or last > len(mask) - 10:
+            raise ValueError(f"{composition}  [{first},{last}] window too narrow")
+
+        if active < minimum_bins:
+            print(f"{composition}  [{first},{last}] {active} bins -> shrink window.")
+            half_W_eV *= 0.7
+            window     = (mu - half_W_eV, mu + half_W_eV)
+            continue
+
+        print(f"{composition}  [{first},{last}] {active} bins -> converged.")
+        return sampler
+
+
+def determine_wl_windows(
+    n_samples_per_site: int,
+    snapshot_counts: int,
+    half_window: int,
+    nprocs: int,
+    rng: Generator,
+    compositions: list[dict[str, float]],
+    E_bin_per_supercell_eV: float,
+    ensemble: Ensemble,
+    *,
+    minimum_bins: int = 100,
 ):
-    print(f"Starting Wang-Landau window searching over {nprocs} processes…")
-    windows = []
-    mus = []
-    for ratio in ratios:
-        random_samples = sample_configs_fast(ensemble, rng, n_samples=10_000, ratio=ratio)
-        mu = random_samples.mean()
-        windows.append((mu - half_window * E_bin_per_supercell_eV,
-                        mu + half_window * E_bin_per_supercell_eV))
-        mus.append(mu)
+    """
+    Run `determine_wl_window` for every composition in `ratios`
+    using joblib for parallelism.  Returns a list of converged samplers
+    in the same order as `ratios`.
+    """
+    print(f"Starting Wang-Landau window search on {nprocs} processes …")
 
-    seed_root  = np.random.SeedSequence(42)
-    child_seeds = [int(s) for s in seed_root.generate_state(len(ratios))]
-    samplers   = [None] * len(ratios)
-    while any(s is None for s in samplers):
-        todo_idx = [i for i, s in enumerate(samplers) if s is None]
+    root_seq = np.random.SeedSequence(42)
+    seeds    = root_seq.generate_state(len(compositions))
 
-        print(f"WL level: running {len(todo_idx)} / {len(ratios)} ratios …")
-
-        # --- 1. launch only the missing jobs -------------------------
-        new_samplers = Parallel(n_jobs=nprocs, backend="loky", max_nbytes=None)(
-            delayed(_single_wl)(
-                ratios[i],
-                child_seeds[i],
-                ensemble = ensemble,
-                num_bins = half_window * 2,  # or better: derive from windows[i]
-                window = windows[i],
-                replace_element = replace_element,
-                new_elements = new_elements,
-                snapshot_counts = snapshot_counts,
-                n_samples_per_site = n_samples_per_site
-            )
-            for i in todo_idx
+    samplers = Parallel(n_jobs=nprocs, backend="loky")(
+        delayed(determine_wl_window)(
+            composition=composition,
+            n_samples_per_site=n_samples_per_site,
+            snapshot_counts=snapshot_counts,
+            half_window=half_window,
+            seed=int(seed),
+            rng=rng,
+            E_bin_per_supercell_eV=E_bin_per_supercell_eV,
+            ensemble=ensemble,
+            minimum_bins=minimum_bins,
         )
+        for seed, composition in zip(seeds, compositions)
+    )
 
-        # --- 2. analyse and decide which ones are done ---------------
-        for local_j, i in enumerate(todo_idx):
-            sampler = new_samplers[local_j] #type: ignore
-            histogram = sampler.samples.get_trace_value("histogram")[-1] # type: ignore
-
-            first = np.argmax(histogram > 0)
-            last  = len(histogram) - np.argmax(histogram[::-1] > 0) - 1
-            active = last - first + 1
-
-            if first < 10 or last >= len(histogram) - 10:
-                raise ValueError(f" x={ratios[i]:.3f}: [{first},{last}] Energy window too narrow")
-
-            if active < minimum_bins:
-                print(f" x={ratios[i]:.3f}: [{first},{last}] only {active} active bins → shrink window.")
-                half_width = 0.5 * (windows[i][1] - windows[i][0])
-                factor = 0.7
-                windows[i] = (mus[i] - half_width*factor, mus[i] + half_width*factor)
-            else:
-                print(f" x={ratios[i]:.3f}: [{first},{last}] {active} bins, converged.")
-                samplers[i] = sampler
     return samplers

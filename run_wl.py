@@ -11,21 +11,13 @@ import tc.wang_landau
 import tc.sampler_data
 import tc.dataset
 
-def init_worker():
-    import sys
-    sys.stdout.reconfigure(line_buffering=True) # type: ignore
-    import warnings
-    warnings.filterwarnings("ignore", message=r"Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*", category=UserWarning, module=r"e3nn\.o3\._wigner")
-
 
 def _run_wl_to_convergence(
-        ratio: float,  # ratio of new elements in the supercell
         seed: int,  # random seed for this run
         ensemble,  # ensemble of structures to sample from
         num_bins: int,  # number of Wang-Landau bins
         window: tuple[float, float],  # Wang-Landau energy window
-        replace_element: str,  # element to be replaced in the supercell
-        new_elements: list[str],  # new elements to be added to the supercell
+        composition: dict[str, float],  # new elements to be added to the supercell
         snapshots_per_loop: int,  # number of random snapshots per ratio
         n_samples_per_site: int,  # number of Wang-Landau samples per site
         supercell_size: int,  # size of the supercell (e.g., 6 for 6x6x6 supercell)
@@ -35,18 +27,17 @@ def _run_wl_to_convergence(
         max_loops: int = 200,  # maximum number of loops to run
 ):
     rng = np.random.default_rng(seed)
-    sampler = tc.wang_landau.initialize_wl_sampler(
-        ensemble, rng=rng, ratio=ratio, num_bins=num_bins, seeds=[seed], window=window)
-    occ_enc = tc.wang_landau.initialize_supercell_occupancy(ensemble, rng, replace_element, new_elements, ratio)
+    sampler = tc.wang_landau.initialize_wl_sampler(ensemble, num_bins=num_bins, seeds=[seed], window=window)
+    occ_enc = tc.wang_landau.initialize_supercell_occupancy(ensemble, rng, composition)
     mod_factor = 1
 
     nsamples_per_loop = int(n_samples_per_site * ensemble.num_sites / max_loops)
     thin_by = max(1, math.ceil(nsamples_per_loop / snapshots_per_loop))
     loop_count = 0
     while mod_factor > mod_factor_threshold and loop_count < max_loops:
-        print(f"[p={ratio:5.3f}]  loop {loop_count}  ln f={mod_factor:8.2e}")
+        print(f"{composition}  loop {loop_count}  ln f={mod_factor:8.2e}")
         sampler.run(nsamples_per_loop, occ_enc, thin_by=thin_by, progress=False)
-        filepath = tc.wang_landau.make_sampler_filepath(ratio, new_elements, supercell_size, lattice_relaxed=lattice_relaxed)
+        filepath = tc.wang_landau.make_sampler_filepath(composition, supercell_size, lattice_relaxed=lattice_relaxed)
         pathlib.Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         data = tc.sampler_data.dump_sampler_data(sampler, filepath)
         mod_factor = data.mod_factor_trace[-1]
@@ -54,7 +45,7 @@ def _run_wl_to_convergence(
         loop_count += 1
 
     status = "CONVERGED" if mod_factor <= mod_factor_threshold else "INCOMPLETE"
-    print(f"[p={ratio:5.3f}] {status} after {loop_count} loop(s); ln f={mod_factor:8.2e}")
+    print(f"{composition}  {status} after {loop_count} loop(s); ln f={mod_factor:8.2e}")
 
 def main(argv=None):
     p = argparse.ArgumentParser()
@@ -71,8 +62,8 @@ def main(argv=None):
 
     # ── input parameters ────────────────────────────────────────────────
     seed_root = np.random.SeedSequence(42) # master seed
-    replace_element = "Mg"
-    ratios = np.linspace(0.1, 0.9, 33, endpoint=True)
+    el0, el1 = args.new_elements.split(",")
+    compositions = [{el0: ratio, el1: 1 - ratio} for ratio in np.linspace(0.1, 0.9, 33, endpoint=True)]
     new_elements = args.new_elements.split(",")
     filepath = tc.dataset.make_ensemble_filepath(new_elements, args.supercell_size, lattice_relaxed=args.relax_lattice)
     E_bin_per_supercell_eV = args.supercell_size ** 3 * args.E_bin_per_prim_eV
@@ -83,16 +74,16 @@ def main(argv=None):
     print("Ensemble loaded.")
 
     rng = np.random.default_rng(123)
-    samplers = tc.wang_landau.determine_wl_window(5_000, args.snapshots_per_loop, args.half_window, args.nprocs,
-                                                  rng, replace_element, new_elements, ratios, E_bin_per_supercell_eV, ensemble)
+    samplers = tc.wang_landau.determine_wl_windows(5_000, args.snapshots_per_loop, args.half_window, args.nprocs,
+                                                  rng, compositions, E_bin_per_supercell_eV, ensemble)
     windows = [(sampler.mckernels[0].spec.min_enthalpy, sampler.mckernels[0].spec.max_enthalpy) for sampler in samplers] # type: ignore
 
-    child_seeds = [int(x) for x in seed_root.generate_state(len(ratios)).tolist()]
+    child_seeds = [int(x) for x in seed_root.generate_state(len(compositions)).tolist()]
     print(f"Using {args.nprocs} workers for parallel sampling.")
-    Parallel(n_jobs=args.nprocs, backend="loky", initializer=init_worker)(
-        delayed(_run_wl_to_convergence)(ratio, seed, ensemble, 2*args.half_window, window, replace_element,
-                                        new_elements, args.snapshots_per_loop, args.n_samples_per_site, args.supercell_size, lattice_relaxed=args.relax_lattice,
-                                        ) for ratio, seed, window in zip(ratios, child_seeds, windows)
+    Parallel(n_jobs=args.nprocs, backend="loky", initializer=tc.wang_landau.init_worker)(
+        delayed(_run_wl_to_convergence)(seed, ensemble, 2*args.half_window, window, composition, args.snapshots_per_loop,
+                                        args.n_samples_per_site, args.supercell_size, lattice_relaxed=args.relax_lattice,
+                                        ) for composition, seed, window in zip(compositions, child_seeds, windows)
     )
 
 if __name__ == "__main__":

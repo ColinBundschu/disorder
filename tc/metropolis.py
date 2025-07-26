@@ -1,14 +1,14 @@
 """
-Utility helpers to benchmark Wang–Landau Tc predictions with
-straight‑forward Metropolis Monte‑Carlo sampling using *smol*.
+Utility helpers to benchmark Wang-Landau Tc predictions with
+straight-forward Metropolis Monte-Carlo sampling using *smol*.
 
-The public API exposes two call‑sites that mirror the WL helpers already
+The public API exposes two call-sites that mirror the WL helpers already
 in the repo:
 
-• ``run_metropolis_heat_capacity`` – run a Metropolis sampler at a single
+• ``run_metropolis_heat_capacity`` - run a Metropolis sampler at a single
   temperature and return the heat capacity *Cv* (per primitive cell).
 
-• ``plot_cv_curve`` – convenience wrapper that takes an array of
+• ``plot_cv_curve`` - convenience wrapper that takes an array of
   temperatures and the corresponding *Cv* values and produces a simple
   line plot.
 
@@ -25,7 +25,7 @@ Typical usage
 >>> plot_cv_curve(Ts, Cv)
 
 The code purposefully mirrors the structure of *wang_landau.py* so that
-both approaches are easy to compare side‑by‑side.
+both approaches are easy to compare side-by-side.
 """
 
 import math
@@ -89,11 +89,11 @@ def run_metropolis_heat_capacity(
     k_B = 8.617333262e-5  # eV / K
 
     # ------------------------------------------------------------------
-    # 1) Build the Metropolis sampler – *smol* has this out‑of‑the‑box
+    # 1) Build the Metropolis sampler - *smol* has this out-of-the-box
     # ------------------------------------------------------------------
     sampler = Sampler.from_ensemble(
         ensemble,
-        kernel_type="Metropolis",    # → detailed‑balance MC
+        kernel_type="Metropolis",    # → detailed-balance MC
         temperature=temperature_K,    # in Kelvin
         step_type="swap",            # preserves overall composition
         seeds=list(seeds),
@@ -128,7 +128,7 @@ def run_metropolis_heat_capacity(
 
 
 def plot_cv_curve(temperatures: np.ndarray, Cv: np.ndarray) -> None:
-    """Simple helper – plot *Cv(T)* on a fresh Matplotlib figure."""
+    """Simple helper - plot *Cv(T)* on a fresh Matplotlib figure."""
 
     _, ax = plt.subplots(figsize=(5, 4))
     ax.plot(temperatures, Cv, marker="o", lw=2)
@@ -161,12 +161,12 @@ def initialize_supercell_occupancy(
     sc_tuple = (n_sc, n_sc, n_sc)
     sc_mat = np.diag(sc_tuple)
 
-    # Dummy conventional cell – only topology matters here.  If *conv_cell*
+    # Dummy conventional cell - only topology matters here.  If *conv_cell*
     # is available upstream you can pass it in instead to avoid the import.
-    conv_cell = bulk("MgO", crystalstructure="rocksalt", a=4.2, cubic=True)
+    conv_cell = bulk("MgO", crystalstructure="rocksalt", a=4.3, cubic=True)
     snapshot = conv_cell * sc_tuple
 
-    # Populate the cation sub‑lattice ----------------------------------
+    # Populate the cation sub-lattice ----------------------------------
     repl_idx = [i for i, at in enumerate(snapshot) if at.symbol == replace_element]
     rng.shuffle(repl_idx)
     n_A = int(round(ratio * len(repl_idx)))

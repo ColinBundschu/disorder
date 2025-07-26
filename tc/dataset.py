@@ -14,6 +14,7 @@ from smol.moca import Ensemble
 from ase.optimize import FIRE
 from ase.filters import UnitCellFilter
 import os
+import math
 
 def run_folderpath(new_elements: list[str], supercell_size: int, *, lattice_relaxed: bool):
     relaxed_str = "LR" if lattice_relaxed else "F"
@@ -156,35 +157,63 @@ def cluster_expansion_from_pmg_structs(
     return ce
 
 def make_random_snapshots(
-        conv_cell: Atoms,
-        supercell_diag: tuple[int, int, int],
-        rng: Generator,
-        replace_element: str,
-        new_elements: list[str],
-        count: int,
-        ratios: np.ndarray,
-        ) -> list[Atoms]:
-    if len(new_elements) != 2:
-        raise NotImplementedError("Only two new elements are supported for replacement.")
-    A, B = new_elements
+    conv_cell      : Atoms,
+    supercell_diag : tuple[int,int,int],
+    rng            : Generator,
+    *,
+    replace_element: str,
+    compositions   : list[dict[str,float]],   # list of {element: fraction}
+    count          : int,
+) -> list[Atoms]:
+    """
+    Generate `count` random snapshots **per composition**.
 
-    proto = conv_cell * supercell_diag
-    replace_idx = [i for i, at in enumerate(proto) if at.symbol == replace_element]
-    n_replace  = len(replace_idx)
-
+    Parameters
+    ----------
+    conv_cell        : primitive MgO‐like rock‑salt cell
+    supercell_diag   : (nx,ny,nz) replication tuple
+    replace_element  : element in `conv_cell` to be replaced
+    compositions     : list of dictionaries, each summing to 1.0
+    count            : how many distinct random snapshots per composition
+    """
+    proto       = conv_cell * supercell_diag
+    repl_idx    = [i for i, at in enumerate(proto) if at.symbol == replace_element]
+    n_replace   = len(repl_idx)
     snapshots: list[Atoms] = []
-    for ratio in ratios:
-        existing_configs = set()
-        n_A = int(round(ratio * n_replace))
-        for _ in range(count):
+
+    for comp in compositions:
+        # ── sanity & integer site counts ───────────────────────────────
+        if not math.isclose(sum(comp.values()), 1.0, abs_tol=1e-6):
+            raise ValueError(f"Fractions must sum to 1; got {comp}")
+        counts = {el: round(frac * n_replace) for el, frac in comp.items()}
+
+        # fix rounding so totals match exactly
+        delta = n_replace - sum(counts.values())
+        if delta:
+            for el in list(counts)[:abs(delta)]:
+                counts[el] += int(math.copysign(1, delta))
+
+        # ── generate `count` unique snapshots ──────────────────────────
+        existing_configs = set()        # track uniqueness by a hashable key
+        while len(existing_configs) < count:
+            rng.shuffle(repl_idx)       # random permutation
             snapshot = proto.copy()
-            A_sites = sorted(rng.choice(replace_idx, size=n_A, replace=False))
-            if tuple(A_sites) in existing_configs:
+
+            start = 0
+            key_parts = []
+            for el, n_el in counts.items():
+                end = start + n_el
+                idx_slice = repl_idx[start:end]
+                snapshot.symbols[idx_slice] = el
+                key_parts.append(tuple(sorted(idx_slice)))
+                start = end
+            key = tuple(key_parts)      # composite key for all elements
+
+            if key in existing_configs:
                 continue
-            existing_configs.add(tuple(A_sites))
-            snapshot.symbols[replace_idx] = B # Set all to B first
-            snapshot.symbols[A_sites] = A # Set selected sites to A
+            existing_configs.add(key)
             snapshots.append(snapshot)
+
     return snapshots
 
 def mace_E_from_occ(

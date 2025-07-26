@@ -117,7 +117,7 @@ def check_sampler_energies(
     """
     Re-compute the energy of *every* kept configuration with
     `ensemble.compute_feature_vector` and compare to the enthalpies
-    recorded in the Wang–Landau trace.
+    recorded in the Wang-Landau trace.
 
     Parameters
     ----------
