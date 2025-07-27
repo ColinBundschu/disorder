@@ -35,7 +35,7 @@ def _run_wl_to_convergence(
     thin_by = max(1, math.ceil(nsamples_per_loop / snapshots_per_loop))
     loop_count = 0
     while mod_factor > mod_factor_threshold and loop_count < max_loops:
-        print(f"{composition}  loop {loop_count}  ln f={mod_factor:8.2e}")
+        print(f"{tc.dataset.comp_str(composition)}  loop {loop_count}  ln f={mod_factor:8.2e}")
         sampler.run(nsamples_per_loop, occ_enc, thin_by=thin_by, progress=False)
         filepath = tc.wang_landau.make_sampler_filepath(composition, supercell_size, lattice_relaxed=lattice_relaxed)
         pathlib.Path(filepath).parent.mkdir(parents=True, exist_ok=True)
@@ -45,7 +45,7 @@ def _run_wl_to_convergence(
         loop_count += 1
 
     status = "CONVERGED" if mod_factor <= mod_factor_threshold else "INCOMPLETE"
-    print(f"{composition}  {status} after {loop_count} loop(s); ln f={mod_factor:8.2e}")
+    print(f"{tc.dataset.comp_str(composition)}  {status} after {loop_count} loop(s); ln f={mod_factor:8.2e}")
 
 def main(argv=None):
     p = argparse.ArgumentParser()

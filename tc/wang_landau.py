@@ -668,15 +668,15 @@ def determine_wl_window(
         active = last - first + 1
 
         if first < 10 or last > len(mask) - 10:
-            raise ValueError(f"{composition}  [{first},{last}] window too narrow")
+            raise ValueError(f"{tc.dataset.comp_str(composition)}  [{first},{last}] window too narrow")
 
         if active < minimum_bins:
-            print(f"{composition}  [{first},{last}] {active} bins -> shrink window.")
+            print(f"{tc.dataset.comp_str(composition)}  [{first},{last}] {active} bins -> shrink window.")
             half_W_eV *= 0.7
             window     = (mu - half_W_eV, mu + half_W_eV)
             continue
 
-        print(f"{composition}  [{first},{last}] {active} bins -> converged.")
+        print(f"{tc.dataset.comp_str(composition)}  [{first},{last}] {active} bins -> converged.")
         return sampler
 
 

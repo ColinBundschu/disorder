@@ -16,11 +16,20 @@ from ase.filters import UnitCellFilter
 import os
 import math
 
+
+def comp_str(composition: dict[str, float]) -> str:
+    """
+    Convert a composition dictionary to a string representation.
+    """
+    return '-'.join(f"{el}:0.{round(1000 * frac)}" for el, frac in sorted(composition.items()))
+
+
 def run_folderpath(new_elements: list[str], supercell_size: int, *, lattice_relaxed: bool):
     relaxed_str = "LR" if lattice_relaxed else "F"
     elem_str = '-'.join(sorted(new_elements))
     # RSO for Rock Salt Oxide
     return os.path.join("/mnt", "z", "disorder", "RSO", f"{elem_str}_{supercell_size}_{relaxed_str}")
+
 
 def make_ensemble_filepath(new_elements: list[str], supercell_size: int, *, lattice_relaxed: bool) -> str:
     return os.path.join(run_folderpath(new_elements, supercell_size, lattice_relaxed=lattice_relaxed), "ensemble.json.gz")
@@ -112,7 +121,7 @@ def cluster_expansion_from_pmg_structs(
     n_cations_per_prim = sum(1 for at in conv_cell if at.symbol == replace_element) # type: ignore
 
     prim_cfg = AseAtomsAdaptor.get_structure(conv_cell) # pyright: ignore[reportArgumentType]
-    composition = Composition({Element(elem): 0.5 for elem in new_elements})
+    composition = Composition({Element(elem): 1.0 / len(new_elements) for elem in new_elements})
     prim_cfg.replace_species({Element(replace_element): composition})
 
     print(f"Primitive cell: {prim_cfg.composition.reduced_formula} with {n_cations_per_prim} cations")
