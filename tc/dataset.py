@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, message=r"Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*", module=r"e3nn\.o3\._wigner")
+
 from collections.abc import Iterable
 import numpy as np
 from ase.atoms import Atoms
