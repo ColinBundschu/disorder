@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, message=r"Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*", module=r"e3nn\.o3\._wigner")
+
 from typing import Sequence
 
 import matplotlib.pyplot as plt
@@ -6,7 +9,6 @@ import numpy as np
 from ase.build import bulk
 from numpy.random import Generator
 from pymatgen.io.ase import AseAtomsAdaptor
-from smol.cofe import ClusterSubspace
 from smol.cofe.space.domain import get_allowed_species
 from smol.moca import Ensemble, Sampler
 from tc.sampler_data import SamplerData
@@ -623,8 +625,7 @@ def sample_configs_fast(
 def init_worker():
     import sys
     sys.stdout.reconfigure(line_buffering=True) # type: ignore
-    import warnings
-    warnings.filterwarnings("ignore", message=r"Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*", category=UserWarning, module=r"e3nn\.o3\._wigner")
+
 
 def determine_wl_window(
     *,
