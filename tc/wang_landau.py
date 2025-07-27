@@ -1,6 +1,7 @@
 from typing import Sequence
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import numpy as np
 from ase.build import bulk
 from numpy.random import Generator
@@ -286,7 +287,7 @@ def compute_thermodynamics(
 
 # ────────────────────────────────────────────────────────────────────
 def plot_cv_surface(
-    ratios: np.ndarray,
+    compositions: list[dict[str, float]],  # e.g. [{"Co":0.3, "Mn":0.5, "Fe":0.2}, ...]
     temperatures_K: np.ndarray,
     Cv_matrix: np.ndarray,
     *,
@@ -311,9 +312,10 @@ def plot_cv_surface(
     plotly_kwargs
         Extra keyword args passed to go.Figure(**plotly_kwargs)
     """
-    ratios         = np.asarray(ratios)
+
+    elem0, ratios = binary_comps_to_ratios(compositions)
     temperatures_K = np.asarray(temperatures_K)
-    Cv_matrix      = np.asarray(Cv_matrix)
+    Cv_matrix = np.asarray(Cv_matrix)
 
     if Cv_matrix.shape != (ratios.size, temperatures_K.size):
         raise ValueError("Cv_matrix shape must be (len(ratios), len(T)).")
@@ -349,13 +351,21 @@ def plot_cv_surface(
     fig.update_layout(
         scene=dict(
             xaxis_title="Temperature (K)",
-            yaxis_title="Mg fraction x",
+            yaxis_title=f"{elem0} fraction x",
             zaxis_title=r"$C_v$ (eV K$^{-1}$ / supercell)",
         ),
         title=r"$C_v(T,x)$ - Wang-Landau",
         margin=dict(l=0, r=0, t=40, b=0)
     )
     return fig
+
+def binary_comps_to_ratios(compositions):
+    if any(len(comp) != 2 or set(comp.keys()) != set(compositions[0].keys()) for comp in compositions):
+        raise ValueError("Compositions must be a list of 2 dicts with the same keys (elements).")
+    elem0 = next(iter(compositions[0].keys()))
+
+    ratios = np.asarray([comp[elem0] for comp in compositions])
+    return elem0,ratios
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -386,19 +396,19 @@ def compute_dos_matrix(
 # 3)  2-D/3-D visualiser  (matplotlib OR plotly)
 # ═════════════════════════════════════════════════════════════════════════════
 def plot_dos_surface(
-    ratios          : np.ndarray,            # shape (n_ratios,)
-    dos_matrix      : np.ndarray,            # shape (n_ratios, nbins)
+    compositions: list[dict[str, float]], # shape (n_ratios,)
+    dos_matrix: np.ndarray, # shape (n_ratios, nbins)
     *,
-    mode            : str   = "surface",     # "surface" | "pcolormesh" | "scatter"
-    cmap            : str   = "viridis",
-    **plotly_kwargs                       # forwarded to go.Figure()
+    mode: str="surface",     # "surface" | "pcolormesh" | "scatter"
+    cmap: str="viridis",
+    **plotly_kwargs
 ):
     """
     Display DOS(ratio, bin_index) on a log₁₀ scale.  Zero-DOS cells are
     masked (shown transparent / skipped) so the logarithm is well-behaved.
     """
 
-    ratios = np.asarray(ratios)
+    elem0, ratios = binary_comps_to_ratios(compositions)
     dos_matrix = np.asarray(dos_matrix)
     if dos_matrix.shape[0] != ratios.size:
         raise ValueError("dos_matrix rows must equal len(ratios)")
@@ -446,7 +456,7 @@ def plot_dos_surface(
     fig.update_layout(
         scene=dict(
             xaxis_title="Bin index",
-            yaxis_title="Mg fraction x",
+            yaxis_title=f"{elem0} fraction x",
             zaxis_title="log₁₀ DOS",
         ),
         title="Density-of-states  log₁₀DOS(idx, x)",
@@ -487,46 +497,48 @@ def compute_histogram_matrix(data_list: Sequence[SamplerData]):
 # 2-bis)  2-D heat-map of *raw counts* (no log scale)
 # ──────────────────────────────────────────────────────────────────────
 def plot_hist_heatmap(
-    ratios, hist_matrix,
+    compositions: list[dict[str, float]],  # e.g. [{"Co":0.5, "Mn":0.5}, ...]
+    hist_matrix,
     *,
     cmap="viridis",
-    mask_zeros=True,           # set False if you want zeros coloured
+    mask_zeros=True,
+    clim=(0, 8),                       # <‑‑ add a colour‑limit kwarg
 ):
     """
-    Show the **raw number** of kept configurations in each WL energy bin.
+    Show the raw number of kept configurations in each WL energy bin.
+    …
 
-    Parameters
-    ----------
-    ratios : 1-D array
-        Composition values (one per WL sampler).
-    hist_matrix : 2-D int array
-        Rows: ratios;  columns: bin indices.
-    engine : {"mpl", "plotly"}
-        Matplotlib (static) or Plotly (interactive) backend.
-    cmap : str
-        Matplotlib colormap name.
-    mask_zeros : bool
-        If True (default) bins with 0 counts are transparent / NaN.
+    clim : (low, high)
+        Fix colour scale to this range; pass None for default autoscaling.
     """
-    ratios      = np.asarray(ratios)
+    elem0, ratios = binary_comps_to_ratios(compositions)
     hist_matrix = np.asarray(hist_matrix)
     if hist_matrix.shape[0] != ratios.size:
         raise ValueError("hist_matrix rows must equal len(ratios)")
 
-    n_bins      = hist_matrix.shape[1]
-    bin_idx     = np.arange(n_bins)
-    B, R        = np.meshgrid(bin_idx, ratios)
+    B, R = np.meshgrid(np.arange(hist_matrix.shape[1]), ratios)
 
     Z = hist_matrix.astype(float)
     if mask_zeros:
-        Z = np.where(Z > 0, Z, np.nan)       # leave zeros transparent
+        Z = np.where(Z > 0, Z, np.nan)        # leave zeros transparent
 
     # ---------------- MATPLOTLIB ----------------
     fig, ax = plt.subplots(figsize=(7, 4))
-    pcm = ax.pcolormesh(B, R, Z, shading="auto", cmap=cmap)
-    fig.colorbar(pcm, ax=ax, label="-log10(mod-factor)")
-    ax.set(xlabel="Bin index", ylabel="Mg fraction $x$", title="Convergence histogram")
-    plt.tight_layout()
+
+    # build a Normalizer or fall back to auto range
+    norm = None
+    if clim is not None:
+        vmin, vmax = clim
+        norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+
+    pcm = ax.pcolormesh(B, R, Z, shading="auto", cmap=cmap, norm=norm)             # <‑‑ fixed colour limits
+    fig.colorbar(pcm, ax=ax, label="count / bin")
+    ax.set(
+        xlabel="Bin index",
+        ylabel=f"{elem0} fraction $x$",
+        title="Convergence histogram",
+    )
+    fig.tight_layout()
     return fig
 
 def get_cation_index_map(ensemble) -> dict[str, int]:
