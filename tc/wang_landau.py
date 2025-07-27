@@ -624,7 +624,7 @@ def init_worker():
     import sys
     sys.stdout.reconfigure(line_buffering=True) # type: ignore
     import warnings
-    warnings.filterwarnings("ignore", message=r"Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*", category=UserWarning, module=r"e3nn\.o3\._wigner")
+    warnings.filterwarnings("ignore", category=UserWarning, message=r"Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected.*", module=r"e3nn\.o3\._wigner")
 
 def determine_wl_window(
     *,
