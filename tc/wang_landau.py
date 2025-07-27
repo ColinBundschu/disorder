@@ -700,9 +700,9 @@ def determine_wl_windows(
     print(f"Starting Wang-Landau window search on {nprocs} processes …")
 
     root_seq = np.random.SeedSequence(42)
-    seeds    = root_seq.generate_state(len(compositions))
+    seeds = root_seq.generate_state(len(compositions))
 
-    samplers = Parallel(n_jobs=nprocs, backend="loky")(
+    samplers = Parallel(n_jobs=nprocs, backend="loky", initializer=init_worker)(
         delayed(determine_wl_window)(
             composition=composition,
             n_samples_per_site=n_samples_per_site,
