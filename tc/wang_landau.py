@@ -28,7 +28,7 @@ def make_sampler_filepath(composition: dict[str, float], supercell_size: int, *,
         if abs(ratio_for_str / 1000 - ratio) > 1e-6:
             raise ValueError(f"Ratio {ratio} is not a multiple of 0.001; cannot convert to filename.")
         comp_str_list.append(f"{el}{ratio_for_str}")
-    comp_str = "-".join(comp_str_list)
+    comp_str = "-".join(sorted(comp_str_list))
     return os.path.join(tc.dataset.run_folderpath(list(composition.keys()), supercell_size, lattice_relaxed=lattice_relaxed), f"{comp_str}.npz")
 
 
